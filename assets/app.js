@@ -34,7 +34,8 @@ function addRecentChat(fsPath, url, permissions) {
         fsPath,
         url,
         permissions,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        id: `chat_${Date.now()}`
     });
     
     // Keep only the most recent chats

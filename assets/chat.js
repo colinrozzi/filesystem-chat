@@ -5,6 +5,12 @@ class ChatConnection {
         this.retryCount = 0;
         this.maxRetries = 5;
         this.retryDelay = 1000;
+        this.messageCounter = 0;
+    }
+
+    generateId(prefix = 'msg') {
+        this.messageCounter++;
+        return `${prefix}_${this.messageCounter}_${Date.now()}`;
     }
 
     connect() {
@@ -66,7 +72,6 @@ class ChatConnection {
         if (data.type === 'message') {
             addMessage(data.message);
         } else if (data.type === 'fs_response') {
-            // Handle filesystem operation responses
             handleFsResponse(data.response);
         }
     }
@@ -133,6 +138,7 @@ function addMessage(message) {
     const container = document.getElementById('messageContainer');
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${message.role}`;
+    messageDiv.id = message.id || chat.generateId('msg');
     
     let content = message.content;
     
@@ -176,7 +182,8 @@ messageForm.addEventListener('submit', (e) => {
         role: 'user',
         content,
         session_id: SESSION_ID,
-        fs_commands: fs_commands.length > 0 ? fs_commands : undefined
+        fs_commands: fs_commands.length > 0 ? fs_commands : undefined,
+        id: chat.generateId('msg')
     };
     
     chat.send(message);
@@ -184,7 +191,8 @@ messageForm.addEventListener('submit', (e) => {
     // Add the message to the UI
     addMessage({
         role: 'user',
-        content
+        content,
+        id: message.id
     });
     
     // Clear the input
