@@ -53,6 +53,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filesystem-chat"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha1",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -145,16 +155,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
-]
-
-[[package]]
-name = "single-chat"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "sha1",
- "wit-bindgen-rt",
 ]
 
 [[package]]
