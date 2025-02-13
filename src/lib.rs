@@ -10,7 +10,7 @@ use bindings::ntwk::theater::filesystem::read_file;
 use bindings::ntwk::theater::runtime::{log, spawn};
 use bindings::ntwk::theater::types::Json;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::collections::HashMap;
 
 struct Component;
@@ -72,7 +72,7 @@ impl State {
 }
 
 impl ActorGuest for Component {
-    fn init() -> Vec<u8> {
+    fn init(data: Option<Json>) -> Json {
         let initial_state = State {
             fs_proxy_id: None,
             chat_sessions: HashMap::new(),
@@ -111,8 +111,8 @@ impl MessageServerClient for Component {
         serde_json::to_vec(&state).unwrap()
     }
 
-    fn handle_request(message: Json, state: Json) -> (Json, Json) {
-        let mut state: State = serde_json::from_slice(&state).unwrap();
+    fn handle_request(_message: Json, state: Json) -> (Json, Json) {
+        let state: State = serde_json::from_slice(&state).unwrap();
 
         // Handle messages that require responses
         let response = json!({
@@ -347,6 +347,10 @@ impl WebSocketGuest for Component {
             },
             MessageType::Binary => WebsocketResponse { messages: vec![] },
             MessageType::Close => WebsocketResponse { messages: vec![] },
+            MessageType::Connect => WebsocketResponse { messages: vec![] },
+            MessageType::Ping => WebsocketResponse { messages: vec![] },
+            MessageType::Pong => WebsocketResponse { messages: vec![] },
+            MessageType::Other(_) => WebsocketResponse { messages: vec![] },
         };
 
         (serde_json::to_vec(&state).unwrap(), response)
