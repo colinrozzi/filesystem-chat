@@ -1,29 +1,20 @@
 name = "filesystem-chat"
 version = "0.1.0"
-description = "Filesystem chat actor for LLM chat application"
-component_path = "/Users/colinrozzi/work/actors/filesystem-chat/target/wasm32-unknown-unknown/release/filesystem_chat.wasm"
-init_data = "/Users/colinrozzi/work/actors/filesystem-chat/assets/init.json"
+description = "Chat interface with filesystem access"
 
 [interface]
-implements = "ntwk:theater/single-actor"
+implements = "ntwk:theater/actor"
 requires = []
 
 [[handlers]]
-type = "runtime"
-config = {}
-
-[[handlers]]
-type = "filesystem"
-config = { path = "/Users/colinrozzi/work/actors/single-chat/assets"}
-
-[[handlers]]
 type = "http-server"
-config = { port = 8081}
+config = { port = 8080 }
 
 [[handlers]]
 type = "websocket-server"
-config = { port = 8082}
+config = { port = 8081 }
 
 [[handlers]]
-type = "http-client"
-config = {}
+type = "message-server"
+config = { port = 8082 }
+interface = "ntwk:theater/message-server-client"
