@@ -3,12 +3,12 @@ mod bindings;
 use bindings::exports::ntwk::theater::actor::Guest as ActorGuest;
 use bindings::exports::ntwk::theater::http_server::Guest as HttpGuest;
 use bindings::exports::ntwk::theater::http_server::{HttpRequest, HttpResponse};
+use bindings::exports::ntwk::theater::message_server_client::Guest as MessageServerClient;
 use bindings::exports::ntwk::theater::websocket_server::Guest as WebSocketGuest;
-use bindings::exports::ntwk::theater::websocket_server::{
-    MessageType, WebsocketMessage, WebsocketResponse,
-};
+use bindings::exports::ntwk::theater::websocket_server::{MessageType, WebsocketMessage, WebsocketResponse};
 use bindings::ntwk::theater::filesystem::read_file;
 use bindings::ntwk::theater::runtime::{log, spawn};
+use bindings::ntwk::theater::types::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -19,6 +19,7 @@ struct Component;
 struct State {
     fs_proxy_id: Option<String>,
     chat_sessions: HashMap<String, ChatSession>,
+    message_counter: u64,  // Used for generating IDs
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,67 +57,128 @@ struct FsCommand {
     content: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct WasmEvent {
+    type_: String,
+    parent: Option<u64>,
+    data: Vec<u8>,
+}
+
+impl State {
+    fn generate_id(&mut self, prefix: &str) -> String {
+        self.message_counter += 1;
+        format!("{}_{}", prefix, self.message_counter)
+    }
+}
+
 impl ActorGuest for Component {
-    fn init(_data: Option<Vec<u8>>) -> Vec<u8> {
+    fn init() -> Vec<u8> {
         let initial_state = State {
             fs_proxy_id: None,
             chat_sessions: HashMap::new(),
+            message_counter: 0,
         };
         serde_json::to_vec(&initial_state).unwrap()
+    }
+}
+
+impl MessageServerClient for Component {
+    fn handle_send(message: Json, state: Json) -> Json {
+        let mut state: State = serde_json::from_slice(&state).unwrap();
+        
+        // Attempt to parse as WasmEvent
+        if let Ok(event) = serde_json::from_slice::<WasmEvent>(&message) {
+            match event.type_.as_str() {
+                "init" => {
+                    // Handle initialization of fs-proxy
+                    if let Ok(data) = String::from_utf8(event.data) {
+                        log(&format!("FS-Proxy initialized: {}", data));
+                    }
+                }
+                "terminate" => {
+                    // Handle fs-proxy termination
+                    if let Some(fs_proxy_id) = &state.fs_proxy_id {
+                        log(&format!("FS-Proxy terminated: {}", fs_proxy_id));
+                        state.fs_proxy_id = None;
+                    }
+                }
+                _ => {
+                    log(&format!("Received unknown event type: {}", event.type_));
+                }
+            }
+        }
+
+        serde_json::to_vec(&state).unwrap()
+    }
+
+    fn handle_request(message: Json, state: Json) -> (Json, Json) {
+        let mut state: State = serde_json::from_slice(&state).unwrap();
+
+        // Handle messages that require responses
+        let response = json!({
+            "success": true,
+            "message": "Acknowledged"
+        });
+
+        (serde_json::to_vec(&response).unwrap(), serde_json::to_vec(&state).unwrap())
     }
 }
 
 impl HttpGuest for Component {
     fn handle_request(request: HttpRequest, state: Vec<u8>) -> (HttpResponse, Vec<u8>) {
         let mut state: State = serde_json::from_slice(&state).unwrap();
-
+        
         let response = match (request.method.as_str(), request.uri.as_str()) {
-            ("GET", "/") => match read_file("index.html") {
-                Ok(content) => HttpResponse {
-                    status: 200,
-                    headers: vec![("Content-Type".to_string(), "text/html".to_string())],
-                    body: Some(content),
-                },
-                Err(e) => HttpResponse {
-                    status: 500,
-                    headers: vec![],
-                    body: Some(format!("Failed to read index.html: {}", e).into_bytes()),
-                },
+            ("GET", "/") => {
+                match read_file("index.html") {
+                    Ok(content) => HttpResponse {
+                        status: 200,
+                        headers: vec![("Content-Type".to_string(), "text/html".to_string())],
+                        body: Some(content),
+                    },
+                    Err(e) => HttpResponse {
+                        status: 500,
+                        headers: vec![],
+                        body: Some(format!("Failed to read index.html: {}", e).into_bytes()),
+                    },
+                }
             },
-            ("GET", "/styles.css") => match read_file("styles.css") {
-                Ok(content) => HttpResponse {
-                    status: 200,
-                    headers: vec![("Content-Type".to_string(), "text/css".to_string())],
-                    body: Some(content),
-                },
-                Err(e) => HttpResponse {
-                    status: 500,
-                    headers: vec![],
-                    body: Some(format!("Failed to read styles.css: {}", e).into_bytes()),
-                },
+            ("GET", "/styles.css") => {
+                match read_file("styles.css") {
+                    Ok(content) => HttpResponse {
+                        status: 200,
+                        headers: vec![("Content-Type".to_string(), "text/css".to_string())],
+                        body: Some(content),
+                    },
+                    Err(e) => HttpResponse {
+                        status: 500,
+                        headers: vec![],
+                        body: Some(format!("Failed to read styles.css: {}", e).into_bytes()),
+                    },
+                }
             },
-            ("GET", "/app.js") => match read_file("app.js") {
-                Ok(content) => HttpResponse {
-                    status: 200,
-                    headers: vec![(
-                        "Content-Type".to_string(),
-                        "application/javascript".to_string(),
-                    )],
-                    body: Some(content),
-                },
-                Err(e) => HttpResponse {
-                    status: 500,
-                    headers: vec![],
-                    body: Some(format!("Failed to read app.js: {}", e).into_bytes()),
-                },
+            ("GET", "/app.js") => {
+                match read_file("app.js") {
+                    Ok(content) => HttpResponse {
+                        status: 200,
+                        headers: vec![
+                            ("Content-Type".to_string(), "application/javascript".to_string()),
+                        ],
+                        body: Some(content),
+                    },
+                    Err(e) => HttpResponse {
+                        status: 500,
+                        headers: vec![],
+                        body: Some(format!("Failed to read app.js: {}", e).into_bytes()),
+                    },
+                }
             },
             ("POST", "/start-chat") => {
-                match serde_json::from_slice::<StartChatRequest>(&request.body.unwrap_or_default())
-                {
+                match serde_json::from_slice::<StartChatRequest>(&request.body.unwrap_or_default()) {
                     Ok(chat_request) => {
                         // Generate a unique session ID
-                        let session_id = format!("chat_{}", uuid::Uuid::new_v4());
-
+                        let session_id = state.generate_id("chat");
+                        
                         // Create fs-proxy actor manifest with the specified path
                         let manifest_content = format!(
                             r#"name = "fs-proxy"
@@ -149,10 +211,9 @@ interface = "ntwk:theater/message-server-client""#,
                             return (
                                 HttpResponse {
                                     status: 500,
-                                    headers: vec![(
-                                        "Content-Type".to_string(),
-                                        "application/json".to_string(),
-                                    )],
+                                    headers: vec![
+                                        ("Content-Type".to_string(), "application/json".to_string()),
+                                    ],
                                     body: Some(serde_json::to_vec(&response).unwrap()),
                                 },
                                 serde_json::to_vec(&state).unwrap(),
@@ -161,7 +222,7 @@ interface = "ntwk:theater/message-server-client""#,
 
                         // Spawn the fs-proxy actor
                         let fs_proxy_id = spawn(&manifest_path);
-
+                        
                         // Store the session information
                         let chat_session = ChatSession {
                             id: session_id.clone(),
@@ -173,7 +234,7 @@ interface = "ntwk:theater/message-server-client""#,
 
                         // Generate the chat URL
                         let chat_url = format!("/chat/{}", session_id);
-
+                        
                         let response = StartChatResponse {
                             success: true,
                             url: Some(chat_url),
@@ -182,10 +243,9 @@ interface = "ntwk:theater/message-server-client""#,
 
                         HttpResponse {
                             status: 200,
-                            headers: vec![(
-                                "Content-Type".to_string(),
-                                "application/json".to_string(),
-                            )],
+                            headers: vec![
+                                ("Content-Type".to_string(), "application/json".to_string()),
+                            ],
                             body: Some(serde_json::to_vec(&response).unwrap()),
                         }
                     }
@@ -197,15 +257,14 @@ interface = "ntwk:theater/message-server-client""#,
                         };
                         HttpResponse {
                             status: 400,
-                            headers: vec![(
-                                "Content-Type".to_string(),
-                                "application/json".to_string(),
-                            )],
+                            headers: vec![
+                                ("Content-Type".to_string(), "application/json".to_string()),
+                            ],
                             body: Some(serde_json::to_vec(&response).unwrap()),
                         }
                     }
                 }
-            }
+            },
             ("GET", uri) if uri.starts_with("/chat/") => {
                 let session_id = uri.trim_start_matches("/chat/");
                 if state.chat_sessions.contains_key(session_id) {
@@ -215,10 +274,7 @@ interface = "ntwk:theater/message-server-client""#,
                                 .replace("{{session_id}}", session_id);
                             HttpResponse {
                                 status: 200,
-                                headers: vec![(
-                                    "Content-Type".to_string(),
-                                    "text/html".to_string(),
-                                )],
+                                headers: vec![("Content-Type".to_string(), "text/html".to_string())],
                                 body: Some(html.into_bytes()),
                             }
                         }
@@ -235,7 +291,7 @@ interface = "ntwk:theater/message-server-client""#,
                         body: Some(b"Chat session not found".to_vec()),
                     }
                 }
-            }
+            },
             _ => HttpResponse {
                 status: 404,
                 headers: vec![],
@@ -250,7 +306,7 @@ interface = "ntwk:theater/message-server-client""#,
 impl WebSocketGuest for Component {
     fn handle_message(message: WebsocketMessage, state: Vec<u8>) -> (Vec<u8>, WebsocketResponse) {
         let state: State = serde_json::from_slice(&state).unwrap();
-
+        
         let response = match message.ty {
             MessageType::Text => {
                 if let Some(text) = message.text {
@@ -258,23 +314,18 @@ impl WebSocketGuest for Component {
                         // Process any filesystem commands in the message
                         if let Some(fs_commands) = chat_message.fs_commands {
                             for cmd in fs_commands {
-                                // Send command to fs-proxy actor
-                                // (This will be implemented with actual message sending)
                                 log(&format!("Processing fs command: {:?}", cmd));
+                                // TODO: Send commands to fs-proxy actor
                             }
                         }
 
-                        // Return success response
                         WebsocketResponse {
                             messages: vec![WebsocketMessage {
                                 ty: MessageType::Text,
-                                text: Some(
-                                    json!({
-                                        "success": true,
-                                        "messageId": uuid::Uuid::new_v4().to_string()
-                                    })
-                                    .to_string(),
-                                ),
+                                text: Some(json!({
+                                    "success": true,
+                                    "messageId": format!("msg_{}", chat_message.session_id)
+                                }).to_string()),
                                 data: None,
                             }],
                         }
@@ -282,13 +333,10 @@ impl WebSocketGuest for Component {
                         WebsocketResponse {
                             messages: vec![WebsocketMessage {
                                 ty: MessageType::Text,
-                                text: Some(
-                                    json!({
-                                        "success": false,
-                                        "error": "Invalid message format"
-                                    })
-                                    .to_string(),
-                                ),
+                                text: Some(json!({
+                                    "success": false,
+                                    "error": "Invalid message format"
+                                }).to_string()),
                                 data: None,
                             }],
                         }
@@ -296,7 +344,7 @@ impl WebSocketGuest for Component {
                 } else {
                     WebsocketResponse { messages: vec![] }
                 }
-            }
+            },
             MessageType::Binary => WebsocketResponse { messages: vec![] },
             MessageType::Close => WebsocketResponse { messages: vec![] },
         };
@@ -306,4 +354,3 @@ impl WebSocketGuest for Component {
 }
 
 bindings::export!(Component with_types_in bindings);
-
