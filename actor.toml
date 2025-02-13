@@ -1,0 +1,29 @@
+name = "single-chat"
+version = "0.1.0"
+description = "Single chat actor for LLM chat application"
+component_path = "/Users/colinrozzi/work/actors/single-chat/target/wasm32-unknown-unknown/release/single_chat.wasm"
+init_data = "/Users/colinrozzi/work/actors/single-chat/assets/init.json"
+
+[interface]
+implements = "ntwk:theater/single-actor"
+requires = []
+
+[[handlers]]
+type = "runtime"
+config = {}
+
+[[handlers]]
+type = "filesystem"
+config = { path = "/Users/colinrozzi/work/actors/single-chat/assets"}
+
+[[handlers]]
+type = "http-server"
+config = { port = 8081}
+
+[[handlers]]
+type = "websocket-server"
+config = { port = 8082}
+
+[[handlers]]
+type = "http-client"
+config = {}
