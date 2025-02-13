@@ -5,6 +5,7 @@ class ChatConnection {
         this.retryCount = 0;
         this.maxRetries = 5;
         this.retryDelay = 1000;
+        this.messageCounter = 0;
     }
 
     connect() {
@@ -187,40 +188,42 @@ function addMessage(message) {
 const chat = new ChatConnection();
 
 // Handle message form submission
-const messageForm = document.getElementById('messageForm');
-const messageInput = document.getElementById('messageInput');
+document.addEventListener('DOMContentLoaded', () => {
+    const messageForm = document.getElementById('messageForm');
+    const messageInput = document.getElementById('messageInput');
 
-messageForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    
-    const content = messageInput.value.trim();
-    if (!content) return;
-    
-    // Extract any filesystem commands
-    const fs_commands = extractFsCommands(content);
-    
-    // Send the message
-    chat.send({
-        type: 'send_message',
-        content,
-        fs_commands: fs_commands.length > 0 ? fs_commands : undefined
+    messageForm.addEventListener('submit', (e) => {
+        e.preventDefault(); // Prevent form submission
+        
+        const content = messageInput.value.trim();
+        if (!content) return;
+        
+        // Extract any filesystem commands
+        const fs_commands = extractFsCommands(content);
+        
+        // Send the message
+        chat.send({
+            type: 'send_message',
+            content,
+            fs_commands: fs_commands.length > 0 ? fs_commands : undefined
+        });
+        
+        // Clear the input
+        messageInput.value = '';
+        messageInput.style.height = 'auto';
     });
-    
-    // Clear the input
-    messageInput.value = '';
-    messageInput.style.height = 'auto';
-});
 
-// Handle input height adjustment
-messageInput.addEventListener('input', () => {
-    messageInput.style.height = 'auto';
-    messageInput.style.height = messageInput.scrollHeight + 'px';
-});
+    // Handle input height adjustment
+    messageInput.addEventListener('input', () => {
+        messageInput.style.height = 'auto';
+        messageInput.style.height = messageInput.scrollHeight + 'px';
+    });
 
-// Handle Shift+Enter for new lines
-messageInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        messageForm.dispatchEvent(new Event('submit'));
-    }
+    // Handle Shift+Enter for new lines
+    messageInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            messageForm.dispatchEvent(new Event('submit'));
+        }
+    });
 });
