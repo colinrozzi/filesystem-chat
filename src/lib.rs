@@ -9,6 +9,7 @@ use bindings::exports::ntwk::theater::websocket_server::{
     MessageType, WebsocketMessage, WebsocketResponse,
 };
 use bindings::ntwk::theater::filesystem::read_file;
+use bindings::ntwk::theater::message_server_host::{request, send};
 use bindings::ntwk::theater::runtime::{log, spawn};
 use bindings::ntwk::theater::types::Json;
 use serde::{Deserialize, Serialize};
@@ -16,20 +17,6 @@ use serde_json::json;
 use std::collections::HashMap;
 
 struct Component;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct State {
-    fs_proxy_id: Option<String>,
-    chat_sessions: HashMap<String, ChatSession>,
-    message_counter: u64, // Used for generating IDs
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ChatSession {
-    id: String,
-    fs_path: String,
-    permissions: Vec<String>,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StartChatRequest {
@@ -53,6 +40,39 @@ struct ChatMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct WasmEvent {
+    type_: String,
+    parent: Option<u64>,
+    data: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct State {
+    fs_proxy_id: Option<String>,
+    store_id: String,
+    chat_sessions: HashMap<String, ChatSession>,
+    message_counter: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ChatSession {
+    id: String,
+    fs_path: String,
+    permissions: Vec<String>,
+    head: Option<String>, // Points to the last message in the chain
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Message {
+    role: String,
+    content: String,
+    parent: Option<String>,
+    id: Option<String>,
+    fs_commands: Option<Vec<FsCommand>>,
+    fs_results: Option<Vec<FsResult>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct FsCommand {
     operation: String,
     path: String,
@@ -60,13 +80,133 @@ struct FsCommand {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct WasmEvent {
-    type_: String,
-    parent: Option<u64>,
-    data: Vec<u8>,
+struct FsResult {
+    success: bool,
+    operation: String,
+    path: String,
+    data: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct InitData {
+    store_id: String,
+    websocket_port: u16,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Request {
+    _type: String,
+    data: Action,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum Action {
+    Get(String),
+    Put(Vec<u8>),
+    All(()),
+}
+
+impl Message {
+    fn new(role: String, content: String, parent: Option<String>) -> Self {
+        Self {
+            role,
+            content,
+            parent,
+            id: None,
+            fs_commands: None,
+            fs_results: None,
+        }
+    }
+
+    fn with_id(mut self, id: String) -> Self {
+        self.id = Some(id);
+        self
+    }
 }
 
 impl State {
+    fn save_message(&self, msg: &Message) -> Result<String, Box<dyn std::error::Error>> {
+        let req = Request {
+            _type: "request".to_string(),
+            data: Action::Put(serde_json::to_vec(&msg)?),
+        };
+
+        let request_bytes = serde_json::to_vec(&req)?;
+        let response_bytes = request(&self.store_id, &request_bytes)?;
+
+        let response: serde_json::Value = serde_json::from_slice(&response_bytes)?;
+        if response["status"].as_str() == Some("ok") {
+            response["key"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or("No key in response".into())
+        } else {
+            Err("Failed to save message".into())
+        }
+    }
+
+    fn load_message(&self, id: &str) -> Result<Message, Box<dyn std::error::Error>> {
+        let req = Request {
+            _type: "request".to_string(),
+            data: Action::Get(id.to_string()),
+        };
+
+        let request_bytes = serde_json::to_vec(&req)?;
+        let response_bytes = request(&self.store_id, &request_bytes)?;
+
+        let response: serde_json::Value = serde_json::from_slice(&response_bytes)?;
+        if response["status"].as_str() == Some("ok") {
+            if let Some(value) = response.get("value") {
+                let bytes = value
+                    .as_array()
+                    .ok_or("Expected byte array")?
+                    .iter()
+                    .map(|v| v.as_u64().unwrap_or(0) as u8)
+                    .collect::<Vec<u8>>();
+                let mut msg: Message = serde_json::from_slice(&bytes)?;
+                msg.id = Some(id.to_string());
+                return Ok(msg);
+            }
+        }
+        Err("Failed to load message".into())
+    }
+
+    fn get_message_history(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
+        let session = self
+            .chat_sessions
+            .get(session_id)
+            .ok_or("Session not found")?;
+
+        let mut messages = Vec::new();
+        let mut current_id = session.head.clone();
+
+        while let Some(id) = current_id {
+            let msg = self.load_message(&id)?;
+            messages.push(msg.clone());
+            current_id = msg.parent.clone();
+        }
+
+        messages.reverse(); // Oldest first
+        Ok(messages)
+    }
+
+    fn update_session_head(
+        &mut self,
+        session_id: &str,
+        message_id: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(session) = self.chat_sessions.get_mut(session_id) {
+            session.head = Some(message_id);
+            Ok(())
+        } else {
+            Err("Session not found".into())
+        }
+    }
+
     fn generate_id(&mut self, prefix: &str) -> String {
         self.message_counter += 1;
         format!("{}_{}", prefix, self.message_counter)
@@ -75,11 +215,20 @@ impl State {
 
 impl ActorGuest for Component {
     fn init(data: Option<Json>) -> Json {
+        log("Initializing filesystem chat actor");
+        let data = data.unwrap();
+
+        let init_data: InitData = serde_json::from_slice(&data).unwrap();
+        log(&format!("Store actor id: {}", init_data.store_id));
+        log(&format!("Websocket port: {}", init_data.websocket_port));
+
         let initial_state = State {
             fs_proxy_id: None,
+            store_id: init_data.store_id,
             chat_sessions: HashMap::new(),
             message_counter: 0,
         };
+
         serde_json::to_vec(&initial_state).unwrap()
     }
 }
@@ -371,4 +520,3 @@ impl WebSocketGuest for Component {
 }
 
 bindings::export!(Component with_types_in bindings);
-
