@@ -190,10 +190,15 @@ impl ActorGuest for Component {
             r#"name = "fs-proxy"
 version = "0.1.0"
 description = "A proxy actor that provides controlled access to the filesystem"
+component_path = "/Users/colinrozzi/work/actors/fs-proxy/target/wasm32-unknown-unknown/release/fs_proxy.wasm"
 
 [interface]
 implements = "ntwk:theater/actor"
 requires = []
+
+[[handlers]]
+type = "runtime"
+config = {{}}
 
 [[handlers]]
 type = "filesystem"
