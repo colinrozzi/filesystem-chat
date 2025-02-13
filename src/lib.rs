@@ -8,7 +8,7 @@ use bindings::exports::ntwk::theater::websocket_server::Guest as WebSocketGuest;
 use bindings::exports::ntwk::theater::websocket_server::{
     MessageType, WebsocketMessage, WebsocketResponse,
 };
-use bindings::ntwk::theater::filesystem::read_file;
+use bindings::ntwk::theater::filesystem::{read_file, write_file};
 use bindings::ntwk::theater::message_server_host::request;
 use bindings::ntwk::theater::runtime::{log, spawn};
 use bindings::ntwk::theater::types::Json;
@@ -273,19 +273,19 @@ implements = "ntwk:theater/actor"
 requires = []
 
 [[handlers]]
-type = "filesystem"
-config = {{ path = "{}" }}
+type = "runtime"
+config = {{}}
 
 [[handlers]]
-type = "message-server"
-config = {{ port = 8090 }}
-interface = "ntwk:theater/message-server-client""#,
+type = "filesystem"
+config = {{ path = "{}" }}
+"#,
                             chat_request.fs_path
                         );
 
                         // Write temporary manifest file
                         let manifest_path = format!("/tmp/fs_proxy_{}.toml", session_id);
-                        if let Err(e) = std::fs::write(&manifest_path, manifest_content) {
+                        if let Err(e) = write_file(&manifest_path, &manifest_content) {
                             let response = StartChatResponse {
                                 success: false,
                                 url: None,
