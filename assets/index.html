@@ -4,47 +4,50 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Filesystem Chat</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-    <div class="container">
-        <h1>Start Filesystem Chat</h1>
-        <form id="fsForm">
-            <div class="form-group">
-                <label for="fsPath">Filesystem Path:</label>
-                <input type="text" id="fsPath" name="fsPath" required 
-                       placeholder="/path/to/directory">
-                <small class="help-text">Enter the directory path you want to work with</small>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>Filesystem Chat</h1>
+            <div class="status-indicator">
+                <span class="status-dot"></span>
+                <span class="status-text">Connecting...</span>
             </div>
-            <div class="form-group">
-                <label for="permissions">Permissions:</label>
-                <div class="checkbox-group">
-                    <label>
-                        <input type="checkbox" name="permissions" value="read" checked> Read
-                    </label>
-                    <label>
-                        <input type="checkbox" name="permissions" value="write"> Write
-                    </label>
-                    <label>
-                        <input type="checkbox" name="permissions" value="delete"> Delete
-                    </label>
-                </div>
-            </div>
-            <button type="submit">Start Chat</button>
-        </form>
-        <div id="result" class="hidden">
-            <h3>Chat Created!</h3>
-            <p>Your filesystem chat is ready at: <a id="chatLink" href="#" target="_blank"></a></p>
         </div>
-        
-        <div id="recentChats" class="recent-chats">
-            <h2>Recent Chats</h2>
-            <div class="recent-chats-list" id="recentChatsList">
-                <!-- Recent chats will be inserted here by JavaScript -->
+
+        <div class="chat-messages" id="messageContainer">
+            <!-- Initial help message -->
+            <div class="system-message">
+                <p>You can use filesystem commands in your messages using XML tags:</p>
+                <pre class="xml-command">
+&lt;fs-command&gt;
+    &lt;operation&gt;read-file&lt;/operation&gt;
+    &lt;path&gt;example.txt&lt;/path&gt;
+&lt;/fs-command&gt;</pre>
+                <p>Available commands:</p>
+                <ul>
+                    <li><code>read-file</code> - Read a file's contents</li>
+                    <li><code>write-file</code> - Write to a file</li>
+                    <li><code>list-files</code> - List directory contents</li>
+                    <li><code>create-dir</code> - Create a directory</li>
+                    <li><code>delete-file</code> - Delete a file</li>
+                    <li><code>delete-dir</code> - Delete a directory</li>
+                </ul>
             </div>
-            <button id="clearRecentChats" class="secondary-button">Clear History</button>
+        </div>
+
+        <div class="chat-input">
+            <form id="messageForm">
+                <textarea 
+                    id="messageInput" 
+                    placeholder="Type your message... (Shift+Enter for new line)"
+                    rows="1"
+                ></textarea>
+                <button type="submit">Send</button>
+            </form>
         </div>
     </div>
-    <script src="app.js"></script>
+    <script src="/chat.js"></script>
 </body>
 </html>
