@@ -175,7 +175,8 @@ impl ActorGuest for Component {
 
         log(&format!("Data: {:?}", data));
 
-        let val = serde_json::from_slice::<Value>(&data).unwrap();
+        log("WHAT IS HAPPENING!");
+        let val = serde_json::from_slice::<Value>(&data);
         log(&format!("Value: {:?}", val));
 
         let init_data: InitData = serde_json::from_slice(&data).unwrap();
@@ -212,8 +213,10 @@ interface = "ntwk:theater/message-server-client""#,
             return vec![];
         }
 
+        let full_manifest_path = "/Users/colinrozzi/work/actors/filesystem-chat/data/fs_proxy.toml";
+
         // Spawn fs-proxy actor
-        let fs_proxy_id = spawn(manifest_path);
+        let fs_proxy_id = spawn(full_manifest_path);
         log(&format!("Spawned fs-proxy actor: {}", fs_proxy_id));
 
         let initial_state = State {
