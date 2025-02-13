@@ -1,131 +1,48 @@
-.chat-container {
-    max-width: 1200px;
-    margin: 0 auto;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-}
-
-.chat-header {
-    padding: 1rem;
-    background: white;
-    border-bottom: 1px solid var(--border-color);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.status-indicator {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background-color: #95a5a6;
-}
-
-.status-dot.connected {
-    background-color: #27ae60;
-}
-
-.status-dot.disconnected {
-    background-color: #c0392b;
-}
-
-.chat-messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 1rem;
-    background: var(--background-color);
-}
-
-.message {
-    margin-bottom: 1rem;
-    padding: 1rem;
-    border-radius: 8px;
-    max-width: 80%;
-}
-
-.message.user {
-    background: white;
-    margin-left: auto;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.message.assistant {
+.fs-results {
+    margin-top: 0.5rem;
+    padding: 0.75rem;
     background: #f8f9fa;
-    margin-right: auto;
-}
-
-.message.system {
-    background: #fff3cd;
-    margin: 1rem auto;
-    font-style: italic;
-    max-width: 90%;
-}
-
-.xml-command {
-    background: #2d3436;
-    color: #dfe6e9;
-    padding: 1rem;
     border-radius: 4px;
-    margin: 0.5rem 0;
-    white-space: pre-wrap;
-    font-family: monospace;
+    border-left: 3px solid #3498db;
 }
 
-.message-metadata {
+.fs-result {
+    margin-bottom: 0.5rem;
+    padding: 0.5rem;
+    border-radius: 4px;
+}
+
+.fs-result.success {
+    background: #e8f5e9;
+    border-left: 3px solid #27ae60;
+}
+
+.fs-result.error {
+    background: #ffebee;
+    border-left: 3px solid #e74c3c;
+}
+
+.fs-result .path {
+    font-family: monospace;
+    color: #2c3e50;
+}
+
+.fs-result .data {
     margin-top: 0.5rem;
     padding: 0.5rem;
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 4px;
-    font-family: monospace;
-    font-size: 0.875rem;
-    white-space: pre-wrap;
-}
-
-.chat-input {
-    padding: 1rem;
     background: white;
-    border-top: 1px solid var(--border-color);
-}
-
-.chat-input form {
-    display: flex;
-    gap: 1rem;
-}
-
-.chat-input textarea {
-    flex: 1;
-    padding: 0.75rem;
-    border: 1px solid var(--border-color);
     border-radius: 4px;
-    font-family: inherit;
-    font-size: 1rem;
-    resize: none;
-    min-height: 40px;
-    max-height: 200px;
+    white-space: pre-wrap;
+    font-family: monospace;
 }
 
-.chat-input textarea:focus {
-    outline: none;
-    border-color: var(--secondary-color);
-}
-
-.chat-input button {
-    padding: 0.75rem 1.5rem;
-    background: var(--secondary-color);
-    color: white;
-    border: none;
+.system-message {
+    margin: 1rem auto;
+    padding: 1rem;
+    background: #fff3cd;
     border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
+    max-width: 90%;
+    font-style: italic;
 }
 
-.chat-input button:hover {
-    background-color: #2980b9;
-}
+/* Add this at the end of your existing chat.css */

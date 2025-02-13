@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Filesystem Chat</title>
-    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/chat.css">
 </head>
 <body>
     <div class="chat-container">
@@ -18,13 +18,22 @@
 
         <div class="chat-messages" id="messageContainer">
             <!-- Messages will be inserted here -->
+            <div class="system-message">
+                Welcome! You can use filesystem commands like this:
+                <pre class="xml-command">
+&lt;fs-command&gt;
+    &lt;operation&gt;read-file&lt;/operation&gt;
+    &lt;path&gt;example.txt&lt;/path&gt;
+&lt;/fs-command&gt;</pre>
+                Available commands: read-file, write-file, list-files, create-dir, delete-file, delete-dir
+            </div>
         </div>
 
         <div class="chat-input">
             <form id="messageForm">
                 <textarea 
                     id="messageInput" 
-                    placeholder="Type your message... (Shift+Enter for new line)"
+                    placeholder="Type your message... (Use XML tags for filesystem operations)"
                     rows="1"
                 ></textarea>
                 <button type="submit">Send</button>
