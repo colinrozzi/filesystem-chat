@@ -9,35 +9,12 @@ use bindings::exports::ntwk::theater::websocket_server::{
     MessageType, WebsocketMessage, WebsocketResponse,
 };
 use bindings::ntwk::theater::filesystem::read_file;
-use bindings::ntwk::theater::message_server_host::{request, send};
+use bindings::ntwk::theater::message_server_host::request;
 use bindings::ntwk::theater::runtime::{log, spawn};
 use bindings::ntwk::theater::types::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-
-struct Component;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StartChatRequest {
-    fs_path: String,
-    permissions: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StartChatResponse {
-    success: bool,
-    url: Option<String>,
-    error: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
-    session_id: String,
-    fs_commands: Option<Vec<FsCommand>>,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct WasmEvent {
@@ -54,7 +31,7 @@ struct State {
     message_counter: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct ChatSession {
     id: String,
     fs_path: String,
@@ -62,7 +39,7 @@ struct ChatSession {
     head: Option<String>, // Points to the last message in the chain
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct Message {
     role: String,
     content: String,
@@ -72,14 +49,14 @@ struct Message {
     fs_results: Option<Vec<FsResult>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct FsCommand {
     operation: String,
     path: String,
     content: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct FsResult {
     success: bool,
     operation: String,
@@ -233,51 +210,6 @@ impl ActorGuest for Component {
     }
 }
 
-impl MessageServerClient for Component {
-    fn handle_send(message: Json, state: Json) -> Json {
-        let mut state: State = serde_json::from_slice(&state).unwrap();
-
-        // Attempt to parse as WasmEvent
-        if let Ok(event) = serde_json::from_slice::<WasmEvent>(&message) {
-            match event.type_.as_str() {
-                "init" => {
-                    // Handle initialization of fs-proxy
-                    if let Ok(data) = String::from_utf8(event.data) {
-                        log(&format!("FS-Proxy initialized: {}", data));
-                    }
-                }
-                "terminate" => {
-                    // Handle fs-proxy termination
-                    if let Some(fs_proxy_id) = &state.fs_proxy_id {
-                        log(&format!("FS-Proxy terminated: {}", fs_proxy_id));
-                        state.fs_proxy_id = None;
-                    }
-                }
-                _ => {
-                    log(&format!("Received unknown event type: {}", event.type_));
-                }
-            }
-        }
-
-        serde_json::to_vec(&state).unwrap()
-    }
-
-    fn handle_request(_message: Json, state: Json) -> (Json, Json) {
-        let state: State = serde_json::from_slice(&state).unwrap();
-
-        // Handle messages that require responses
-        let response = json!({
-            "success": true,
-            "message": "Acknowledged"
-        });
-
-        (
-            serde_json::to_vec(&response).unwrap(),
-            serde_json::to_vec(&state).unwrap(),
-        )
-    }
-}
-
 impl HttpGuest for Component {
     fn handle_request(request: HttpRequest, state: Vec<u8>) -> (HttpResponse, Vec<u8>) {
         let mut state: State = serde_json::from_slice(&state).unwrap();
@@ -379,6 +311,7 @@ interface = "ntwk:theater/message-server-client""#,
                             id: session_id.clone(),
                             fs_path: chat_request.fs_path,
                             permissions: chat_request.permissions,
+                            head: None,
                         };
                         state.chat_sessions.insert(session_id.clone(), chat_session);
                         state.fs_proxy_id = Some(fs_proxy_id);
@@ -461,30 +394,20 @@ interface = "ntwk:theater/message-server-client""#,
 
 impl WebSocketGuest for Component {
     fn handle_message(message: WebsocketMessage, state: Vec<u8>) -> (Vec<u8>, WebsocketResponse) {
-        let state: State = serde_json::from_slice(&state).unwrap();
+        let mut state: State = serde_json::from_slice(&state).unwrap();
 
         let response = match message.ty {
             MessageType::Text => {
                 if let Some(text) = message.text {
-                    if let Ok(chat_message) = serde_json::from_str::<ChatMessage>(&text) {
-                        // Process any filesystem commands in the message
-                        if let Some(fs_commands) = chat_message.fs_commands {
-                            for cmd in fs_commands {
-                                log(&format!("Processing fs command: {:?}", cmd));
-                                // TODO: Send commands to fs-proxy actor
-                            }
-                        }
-
+                    if let Ok(chat_message) = serde_json::from_str::<Message>(&text) {
+                        // TODO: Handle message storage and fs commands
                         WebsocketResponse {
                             messages: vec![WebsocketMessage {
                                 ty: MessageType::Text,
-                                text: Some(
-                                    json!({
-                                        "success": true,
-                                        "messageId": format!("msg_{}", chat_message.session_id)
-                                    })
-                                    .to_string(),
-                                ),
+                                text: Some(json!({
+                                    "success": true,
+                                    "messageId": format!("msg_{}", chat_message.id.unwrap_or_default())
+                                }).to_string()),
                                 data: None,
                             }],
                         }
@@ -517,6 +440,66 @@ impl WebSocketGuest for Component {
 
         (serde_json::to_vec(&state).unwrap(), response)
     }
+}
+
+impl MessageServerClient for Component {
+    fn handle_send(message: Json, state: Json) -> Json {
+        let mut state: State = serde_json::from_slice(&state).unwrap();
+
+        // Attempt to parse as WasmEvent
+        if let Ok(event) = serde_json::from_slice::<WasmEvent>(&message) {
+            match event.type_.as_str() {
+                "init" => {
+                    // Handle initialization of fs-proxy
+                    if let Ok(data) = String::from_utf8(event.data) {
+                        log(&format!("FS-Proxy initialized: {}", data));
+                    }
+                }
+                "terminate" => {
+                    // Handle fs-proxy termination
+                    if let Some(fs_proxy_id) = &state.fs_proxy_id {
+                        log(&format!("FS-Proxy terminated: {}", fs_proxy_id));
+                        state.fs_proxy_id = None;
+                    }
+                }
+                _ => {
+                    log(&format!("Received unknown event type: {}", event.type_));
+                }
+            }
+        }
+
+        serde_json::to_vec(&state).unwrap()
+    }
+
+    fn handle_request(_message: Json, state: Json) -> (Json, Json) {
+        let state: State = serde_json::from_slice(&state).unwrap();
+
+        // Handle messages that require responses
+        let response = json!({
+            "success": true,
+            "message": "Acknowledged"
+        });
+
+        (
+            serde_json::to_vec(&response).unwrap(),
+            serde_json::to_vec(&state).unwrap(),
+        )
+    }
+}
+
+struct Component;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StartChatRequest {
+    fs_path: String,
+    permissions: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StartChatResponse {
+    success: bool,
+    url: Option<String>,
+    error: Option<String>,
 }
 
 bindings::export!(Component with_types_in bindings);
