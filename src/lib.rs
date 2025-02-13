@@ -203,11 +203,7 @@ config = {{}}
 [[handlers]]
 type = "filesystem"
 config = {{ path = "{}" }}
-
-[[handlers]]
-type = "message-server"
-config = {{ port = 8090 }}
-interface = "ntwk:theater/message-server-client""#,
+"#,
             init_data.fs_path
         );
 
