@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Filesystem Chat</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>Filesystem Chat</h1>
+            <div class="status-indicator">
+                <span class="status-dot"></span>
+                <span class="status-text">Connecting...</span>
+            </div>
+        </div>
+
+        <div class="chat-messages" id="messageContainer">
+            <!-- Messages will be inserted here -->
+        </div>
+
+        <div class="chat-input">
+            <form id="messageForm">
+                <textarea 
+                    id="messageInput" 
+                    placeholder="Type your message... (Shift+Enter for new line)"
+                    rows="1"
+                ></textarea>
+                <button type="submit">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Store the session ID from the server
+        const SESSION_ID = "{{session_id}}";
+    </script>
+    <script src="/chat.js"></script>
+</body>
+</html>
