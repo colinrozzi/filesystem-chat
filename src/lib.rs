@@ -213,7 +213,8 @@ interface = "ntwk:theater/message-server-client""#,
             return vec![];
         }
 
-        let full_manifest_path = "/Users/colinrozzi/work/actors/filesystem-chat/data/fs_proxy.toml";
+        let full_manifest_path =
+            "/Users/colinrozzi/work/actors/filesystem-chat/assets/data/fs_proxy.toml";
 
         // Spawn fs-proxy actor
         let fs_proxy_id = spawn(full_manifest_path);
