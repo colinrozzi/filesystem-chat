@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Filesystem Chat</title>
-    <link rel="stylesheet" href="/chat.css">
+    <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
     <div class="chat-container">
@@ -17,15 +17,23 @@
         </div>
 
         <div class="chat-messages" id="messageContainer">
-            <!-- Messages will be inserted here -->
+            <!-- Initial help message -->
             <div class="system-message">
-                Welcome! You can use filesystem commands like this:
+                <p>You can use filesystem commands in your messages using XML tags:</p>
                 <pre class="xml-command">
 &lt;fs-command&gt;
     &lt;operation&gt;read-file&lt;/operation&gt;
     &lt;path&gt;example.txt&lt;/path&gt;
 &lt;/fs-command&gt;</pre>
-                Available commands: read-file, write-file, list-files, create-dir, delete-file, delete-dir
+                <p>Available commands:</p>
+                <ul>
+                    <li><code>read-file</code> - Read a file's contents</li>
+                    <li><code>write-file</code> - Write to a file</li>
+                    <li><code>list-files</code> - List directory contents</li>
+                    <li><code>create-dir</code> - Create a directory</li>
+                    <li><code>delete-file</code> - Delete a file</li>
+                    <li><code>delete-dir</code> - Delete a directory</li>
+                </ul>
             </div>
         </div>
 
@@ -33,18 +41,13 @@
             <form id="messageForm">
                 <textarea 
                     id="messageInput" 
-                    placeholder="Type your message... (Use XML tags for filesystem operations)"
+                    placeholder="Type your message... (Shift+Enter for new line)"
                     rows="1"
                 ></textarea>
                 <button type="submit">Send</button>
             </form>
         </div>
     </div>
-
-    <script>
-        // Store the session ID from the server
-        const SESSION_ID = "{{session_id}}";
-    </script>
     <script src="/chat.js"></script>
 </body>
 </html>

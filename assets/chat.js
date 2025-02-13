@@ -5,22 +5,20 @@ class ChatConnection {
         this.retryCount = 0;
         this.maxRetries = 5;
         this.retryDelay = 1000;
-        this.messageCounter = 0;
-    }
-
-    generateId(prefix = 'msg') {
-        this.messageCounter++;
-        return `${prefix}_${this.messageCounter}_${Date.now()}`;
     }
 
     connect() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        this.ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsPort = {{WEBSOCKET_PORT}}; // This gets replaced by the server
+        this.ws = new WebSocket(`${wsProtocol}//${window.location.hostname}:${wsPort}`);
         
         this.ws.onopen = () => {
             console.log('WebSocket connected');
             this.updateStatus('Connected', true);
             this.retryCount = 0;
+            
+            // Get message history
+            this.send({ type: 'get_messages' });
             
             // Send any queued messages
             while (this.messageQueue.length > 0) {
@@ -69,10 +67,20 @@ class ChatConnection {
     }
 
     handleMessage(data) {
-        if (data.type === 'message') {
-            addMessage(data.message);
-        } else if (data.type === 'fs_response') {
-            handleFsResponse(data.response);
+        if (data.type === 'message_update') {
+            if (data.message) {
+                // Single message update
+                addMessage(data.message);
+            } else if (data.messages) {
+                // Full message history
+                const container = document.getElementById('messageContainer');
+                // Keep the system message
+                const systemMessage = container.firstElementChild;
+                container.innerHTML = '';
+                container.appendChild(systemMessage);
+                // Add all messages in order
+                data.messages.forEach(addMessage);
+            }
         }
     }
 }
@@ -82,7 +90,8 @@ function extractFsCommands(content) {
     const commands = [];
     
     try {
-        const xmlDoc = parser.parseFromString(content, 'text/xml');
+        // Add a root element to handle multiple commands
+        const xmlDoc = parser.parseFromString(`<root>${content}</root>`, 'text/xml');
         const cmdElements = xmlDoc.getElementsByTagName('fs-command');
         
         for (const cmdElement of cmdElements) {
@@ -121,24 +130,40 @@ function escapeHtml(unsafe) {
         .replace(/'/g, "&#039;");
 }
 
-function handleFsResponse(response) {
-    // Add system message showing the result of filesystem operations
-    const message = {
-        role: 'system',
-        content: response.success ? 
-            `Filesystem operation completed successfully` :
-            `Filesystem operation failed: ${response.error}`,
-        metadata: response
-    };
+function formatFsResults(results) {
+    if (!results || results.length === 0) return '';
     
-    addMessage(message);
+    const resultElements = results.map(result => {
+        const className = result.success ? 'success' : 'error';
+        let content = `
+            <div class="fs-result ${className}">
+                <strong>${result.operation}</strong> 
+                <span class="path">${result.path}</span>
+        `;
+        
+        if (result.data) {
+            content += `<div class="data">${escapeHtml(result.data)}</div>`;
+        }
+        
+        if (result.error) {
+            content += `<div class="error">${result.error}</div>`;
+        }
+        
+        content += '</div>';
+        return content;
+    });
+    
+    return `
+        <div class="fs-results">
+            ${resultElements.join('')}
+        </div>
+    `;
 }
 
 function addMessage(message) {
     const container = document.getElementById('messageContainer');
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${message.role}`;
-    messageDiv.id = message.id || chat.generateId('msg');
     
     let content = message.content;
     
@@ -149,12 +174,9 @@ function addMessage(message) {
     
     messageDiv.innerHTML = content;
     
-    // Add metadata if present
-    if (message.metadata) {
-        const metadataDiv = document.createElement('div');
-        metadataDiv.className = 'message-metadata';
-        metadataDiv.textContent = JSON.stringify(message.metadata, null, 2);
-        messageDiv.appendChild(metadataDiv);
+    // Add filesystem results if present
+    if (message.fs_results) {
+        messageDiv.innerHTML += formatFsResults(message.fs_results);
     }
     
     container.appendChild(messageDiv);
@@ -174,25 +196,14 @@ messageForm.addEventListener('submit', (e) => {
     const content = messageInput.value.trim();
     if (!content) return;
     
-    // Extract any filesystem commands from the message
+    // Extract any filesystem commands
     const fs_commands = extractFsCommands(content);
     
     // Send the message
-    const message = {
-        role: 'user',
+    chat.send({
+        type: 'send_message',
         content,
-        session_id: SESSION_ID,
-        fs_commands: fs_commands.length > 0 ? fs_commands : undefined,
-        id: chat.generateId('msg')
-    };
-    
-    chat.send(message);
-    
-    // Add the message to the UI
-    addMessage({
-        role: 'user',
-        content,
-        id: message.id
+        fs_commands: fs_commands.length > 0 ? fs_commands : undefined
     });
     
     // Clear the input
