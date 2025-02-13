@@ -3,43 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Single Chat</title>
+    <title>Filesystem Chat</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="container">
-        <div class="main-chat">
-            <div class="title-bar">
-                <div class="title-info">
-                    <div class="head-id">Head: None</div>
-                    <div id="connectionStatus" class="connection-status disconnected">
-                        Disconnected
-                    </div>
+        <h1>Start Filesystem Chat</h1>
+        <form id="fsForm">
+            <div class="form-group">
+                <label for="fsPath">Filesystem Path:</label>
+                <input type="text" id="fsPath" name="fsPath" required 
+                       placeholder="/path/to/directory">
+                <small class="help-text">Enter the directory path you want to work with</small>
+            </div>
+            <div class="form-group">
+                <label for="permissions">Permissions:</label>
+                <div class="checkbox-group">
+                    <label>
+                        <input type="checkbox" name="permissions" value="read" checked> Read
+                    </label>
+                    <label>
+                        <input type="checkbox" name="permissions" value="write"> Write
+                    </label>
+                    <label>
+                        <input type="checkbox" name="permissions" value="delete"> Delete
+                    </label>
                 </div>
             </div>
-            <div class="message-area-container">
-                <div id="messageLoading" class="loading-overlay">
-                    <div class="loading-spinner"></div>
-                </div>
-                <div id="messageArea" class="message-area">
-                    <!-- Messages will be rendered here -->
-                </div>
+            <button type="submit">Start Chat</button>
+        </form>
+        <div id="result" class="hidden">
+            <h3>Chat Created!</h3>
+            <p>Your filesystem chat is ready at: <a id="chatLink" href="#" target="_blank"></a></p>
+        </div>
+        
+        <div id="recentChats" class="recent-chats">
+            <h2>Recent Chats</h2>
+            <div class="recent-chats-list" id="recentChatsList">
+                <!-- Recent chats will be inserted here by JavaScript -->
             </div>
-            <div class="input-area">
-                <div class="input-container">
-                    <textarea id="messageInput" class="message-input" 
-                        placeholder="Type your message... (Shift+Enter for new line)"
-                        rows="1"></textarea>
-                    <button onclick="sendMessage()" class="send-button">
-                        Send
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M5 12h14m-6-6l6 6-6 6" stroke-width="2" stroke-linecap="round" />
-                        </svg>
-                    </button>
-                </div>
-            </div>
+            <button id="clearRecentChats" class="secondary-button">Clear History</button>
         </div>
     </div>
-    <script src="chat.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
