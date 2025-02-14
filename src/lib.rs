@@ -173,13 +173,53 @@ impl State {
         &self,
         messages: Vec<Message>,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let anthropic_messages: Vec<AnthropicMessage> = messages
-            .iter()
-            .map(|msg| AnthropicMessage {
-                role: msg.role.clone(),
-                content: msg.content.clone(),
-            })
-            .collect();
+        // Create system message with filesystem capabilities explanation
+        let system_message = AnthropicMessage {
+            role: "system".to_string(),
+            content: format!(
+                r#"You are a helpful AI assistant with filesystem access capabilities. Users can interact with the filesystem using XML commands in their messages.
+Available commands:
+- read-file: Read contents of a file
+  Example: <fs-command><operation>read-file</operation><path>example.txt</path></fs-command>
+
+- write-file: Write content to a file
+  Example: <fs-command><operation>write-file</operation><path>new.txt</path><content>Hello World</content></fs-command>
+
+- list-files: List contents of a directory
+  Example: <fs-command><operation>list-files</operation><path>.</path></fs-command>
+
+- create-dir: Create a new directory
+  Example: <fs-command><operation>create-dir</operation><path>new_folder</path></fs-command>
+
+- delete-file: Delete a file
+  Example: <fs-command><operation>delete-file</operation><path>old.txt</path></fs-command>
+
+- delete-dir: Delete a directory
+  Example: <fs-command><operation>delete-dir</operation><path>old_folder</path></fs-command>
+
+When a user's message contains filesystem commands, you will see the results in their next message.
+You can suggest filesystem operations when relevant, showing the exact XML commands they should use.
+Always format filesystem paths according to the user's context and validate that paths make sense.
+
+Current filesystem root path: {}
+Current permissions: {:?}
+
+Remember to:
+1. Be explicit about file operations you're suggesting
+2. Use exact XML command syntax in your suggestions
+3. Consider the current permissions before suggesting operations
+4. Explain what each command will do before suggesting it
+5. Handle operation results appropriately in follow-up messages"#,
+                self.fs_path, self.permissions
+            ),
+        };
+
+        // Combine system message with conversation history
+        let mut anthropic_messages = vec![system_message];
+        anthropic_messages.extend(messages.iter().map(|msg| AnthropicMessage {
+            role: msg.role.clone(),
+            content: msg.content.clone(),
+        }));
 
         let request = HttpRequest {
             method: "POST".to_string(),
