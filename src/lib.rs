@@ -36,16 +36,8 @@ struct State {
     fs_proxy_id: Option<String>,
     fs_path: String,
     permissions: Vec<String>,
-    head: Option<String>, // Points to last message in chain
+    head: Option<String>,
     websocket_port: u16,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct ChatSession {
-    id: String,
-    fs_path: String,
-    permissions: Vec<String>,
-    head: Option<String>, // Points to the last message in the chain
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -115,7 +107,7 @@ impl State {
         let request_bytes = serde_json::to_vec(&req)?;
         let response_bytes = request(&self.store_id, &request_bytes)?;
 
-        let response: serde_json::Value = serde_json::from_slice(&response_bytes)?;
+        let response: Value = serde_json::from_slice(&response_bytes)?;
         if response["status"].as_str() == Some("ok") {
             response["key"]
                 .as_str()
@@ -135,7 +127,7 @@ impl State {
         let request_bytes = serde_json::to_vec(&req)?;
         let response_bytes = request(&self.store_id, &request_bytes)?;
 
-        let response: serde_json::Value = serde_json::from_slice(&response_bytes)?;
+        let response: Value = serde_json::from_slice(&response_bytes)?;
         if response["status"].as_str() == Some("ok") {
             if let Some(value) = response.get("value") {
                 let bytes = value
@@ -165,19 +157,79 @@ impl State {
         messages.reverse(); // Oldest first
         Ok(messages)
     }
+
+    fn process_fs_commands(&self, commands: Vec<FsCommand>) -> Vec<FsResult> {
+        let mut results = Vec::new();
+
+        for cmd in commands {
+            if !self.permissions.contains(&cmd.operation) {
+                results.push(FsResult {
+                    success: false,
+                    operation: cmd.operation,
+                    path: cmd.path,
+                    data: None,
+                    error: Some("Permission denied".to_string()),
+                });
+                continue;
+            }
+
+            // Send command to fs-proxy
+            if let Some(fs_proxy_id) = &self.fs_proxy_id {
+                let req = json!({
+                    "operation": cmd.operation,
+                    "path": cmd.path,
+                    "content": cmd.content
+                });
+
+                match request(fs_proxy_id, &serde_json::to_vec(&req).unwrap()) {
+                    Ok(response) => {
+                        if let Ok(resp) = serde_json::from_slice::<Value>(&response) {
+                            results.push(FsResult {
+                                success: resp["success"].as_bool().unwrap_or(false),
+                                operation: cmd.operation,
+                                path: cmd.path,
+                                data: resp["data"].as_str().map(|s| s.to_string()),
+                                error: resp["error"].as_str().map(|s| s.to_string()),
+                            });
+                        } else {
+                            results.push(FsResult {
+                                success: false,
+                                operation: cmd.operation,
+                                path: cmd.path,
+                                data: None,
+                                error: Some("Invalid response".to_string()),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        results.push(FsResult {
+                            success: false,
+                            operation: cmd.operation,
+                            path: cmd.path,
+                            data: None,
+                            error: Some(format!("Request failed: {}", e)),
+                        });
+                    }
+                }
+            } else {
+                results.push(FsResult {
+                    success: false,
+                    operation: cmd.operation,
+                    path: cmd.path,
+                    data: None,
+                    error: Some("Filesystem proxy not available".to_string()),
+                });
+            }
+        }
+
+        results
+    }
 }
 
 impl ActorGuest for Component {
     fn init(data: Option<Json>) -> Json {
         log("Initializing filesystem chat actor");
-        log(&format!("Data: {:?}", data));
         let data = data.unwrap();
-
-        log(&format!("Data: {:?}", data));
-
-        log("WHAT IS HAPPENING!");
-        let val = serde_json::from_slice::<Value>(&data);
-        log(&format!("Value: {:?}", val));
 
         let init_data: InitData = serde_json::from_slice(&data).unwrap();
         log(&format!("Store actor id: {}", init_data.store_id));
@@ -235,7 +287,7 @@ config = {{ path = "{}" }}
 }
 
 impl HttpGuest for Component {
-    fn handle_request(request: HttpRequest, state: Vec<u8>) -> (HttpResponse, Vec<u8>) {
+    fn handle_request(request: HttpRequest, state: Json) -> (HttpResponse, Json) {
         let state: State = serde_json::from_slice(&state).unwrap();
 
         let response = match (request.method.as_str(), request.uri.as_str()) {
@@ -289,7 +341,7 @@ impl HttpGuest for Component {
                     headers: vec![("Content-Type".to_string(), "application/json".to_string())],
                     body: Some(
                         serde_json::to_vec(&json!({
-                            "status": "success",
+                            "type": "message_update",
                             "messages": messages
                         }))
                         .unwrap(),
@@ -313,147 +365,56 @@ impl HttpGuest for Component {
 }
 
 impl WebSocketGuest for Component {
-    fn handle_message(message: WebsocketMessage, state: Vec<u8>) -> (Vec<u8>, WebsocketResponse) {
+    fn handle_message(message: WebsocketMessage, state: Json) -> (Json, WebsocketResponse) {
         let mut state: State = serde_json::from_slice(&state).unwrap();
 
-        let response = match message.ty {
+        match message.ty {
             MessageType::Text => {
                 if let Some(text) = message.text {
                     if let Ok(command) = serde_json::from_str::<Value>(&text) {
                         match command["type"].as_str() {
                             Some("send_message") => {
                                 if let Some(content) = command["content"].as_str() {
-                                    // Create user message
-                                    let user_msg = Message::new(
+                                    // Create initial user message
+                                    let mut user_msg = Message::new(
                                         "user".to_string(),
                                         content.to_string(),
-                                        state.head.clone(),
+                                        command["parent"].as_str().map(String::from),
                                     );
 
-                                    // Extract any filesystem commands
-                                    let fs_commands = if let Some(commands) =
-                                        command["fs_commands"].as_array()
-                                    {
-                                        Some(
-                                            commands
-                                                .iter()
-                                                .filter_map(|cmd| {
-                                                    serde_json::from_value::<FsCommand>(cmd.clone())
-                                                        .ok()
-                                                })
-                                                .collect::<Vec<_>>(),
-                                        )
-                                    } else {
-                                        None
-                                    };
+                                    // Extract filesystem commands if present
+                                    if let Some(fs_commands) = command["fs_commands"].as_array() {
+                                        let commands: Vec<FsCommand> = fs_commands
+                                            .iter()
+                                            .filter_map(|cmd| {
+                                                serde_json::from_value(cmd.clone()).ok()
+                                            })
+                                            .collect();
 
-                                    let mut user_msg_with_commands = user_msg;
-                                    user_msg_with_commands.fs_commands = fs_commands.clone();
+                                        if !commands.is_empty() {
+                                            user_msg.fs_commands = Some(commands.clone());
+                                        }
+                                    }
 
-                                    // Save the message and get its ID
-                                    if let Ok(msg_id) = state.save_message(&user_msg_with_commands)
-                                    {
-                                        state.head = Some(msg_id.clone());
-                                        let mut stored_msg =
-                                            user_msg_with_commands.with_id(msg_id.clone());
+                                    // Save the message first
+                                    if let Ok(msg_id) = state.save_message(&user_msg) {
+                                        let mut user_msg = user_msg.with_id(msg_id.clone());
+                                        state.head = Some(msg_id);
 
-                                        // Process filesystem commands if present
-                                        if let Some(commands) = fs_commands {
-                                            let mut results = Vec::new();
-                                            for cmd in commands {
-                                                // Only process commands if we have permission
-                                                if !state.permissions.contains(&cmd.operation) {
-                                                    results.push(FsResult {
-                                                        success: false,
-                                                        operation: cmd.operation,
-                                                        path: cmd.path,
-                                                        data: None,
-                                                        error: Some(
-                                                            "Permission denied".to_string(),
-                                                        ),
-                                                    });
-                                                    continue;
-                                                }
-
-                                                // Send command to fs-proxy
-                                                let result =
-                                                    if let Some(fs_proxy_id) = &state.fs_proxy_id {
-                                                        let req = json!({
-                                                            "operation": cmd.operation,
-                                                            "path": cmd.path,
-                                                            "content": cmd.content
-                                                        });
-
-                                                        match request(
-                                                            fs_proxy_id,
-                                                            &serde_json::to_vec(&req).unwrap(),
-                                                        ) {
-                                                            Ok(response) => {
-                                                                if let Ok(resp) =
-                                                                    serde_json::from_slice::<Value>(
-                                                                        &response,
-                                                                    )
-                                                                {
-                                                                    FsResult {
-                                                                        success: resp["success"]
-                                                                            .as_bool()
-                                                                            .unwrap_or(false),
-                                                                        operation: cmd.operation,
-                                                                        path: cmd.path,
-                                                                        data: resp["data"]
-                                                                            .as_str()
-                                                                            .map(|s| s.to_string()),
-                                                                        error: resp["error"]
-                                                                            .as_str()
-                                                                            .map(|s| s.to_string()),
-                                                                    }
-                                                                } else {
-                                                                    FsResult {
-                                                                        success: false,
-                                                                        operation: cmd.operation,
-                                                                        path: cmd.path,
-                                                                        data: None,
-                                                                        error: Some(
-                                                                            "Invalid response"
-                                                                                .to_string(),
-                                                                        ),
-                                                                    }
-                                                                }
-                                                            }
-                                                            Err(e) => FsResult {
-                                                                success: false,
-                                                                operation: cmd.operation,
-                                                                path: cmd.path,
-                                                                data: None,
-                                                                error: Some(format!(
-                                                                    "Request failed: {}",
-                                                                    e
-                                                                )),
-                                                            },
-                                                        }
-                                                    } else {
-                                                        FsResult {
-                                                            success: false,
-                                                            operation: cmd.operation,
-                                                            path: cmd.path,
-                                                            data: None,
-                                                            error: Some(
-                                                                "Filesystem proxy not available"
-                                                                    .to_string(),
-                                                            ),
-                                                        }
-                                                    };
-                                                results.push(result);
-                                            }
+                                        // Process any filesystem commands
+                                        if let Some(commands) = &user_msg.fs_commands {
+                                            let results =
+                                                state.process_fs_commands(commands.clone());
+                                            user_msg.fs_results = Some(results);
 
                                             // Update message with results
-                                            stored_msg.fs_results = Some(results);
-                                            if let Ok(updated_id) = state.save_message(&stored_msg)
-                                            {
-                                                stored_msg = stored_msg.with_id(updated_id);
+                                            if let Ok(updated_id) = state.save_message(&user_msg) {
+                                                user_msg = user_msg.with_id(updated_id.clone());
+                                                state.head = Some(updated_id);
                                             }
                                         }
 
+                                        // Send response with message
                                         return (
                                             serde_json::to_vec(&state).unwrap(),
                                             WebsocketResponse {
@@ -462,7 +423,7 @@ impl WebSocketGuest for Component {
                                                     text: Some(
                                                         json!({
                                                             "type": "message_update",
-                                                            "message": stored_msg
+                                                            "message": user_msg
                                                         })
                                                         .to_string(),
                                                     ),
@@ -499,17 +460,14 @@ impl WebSocketGuest for Component {
                         }
                     }
                 }
-                WebsocketResponse { messages: vec![] }
             }
-            MessageType::Binary => WebsocketResponse { messages: vec![] },
-            MessageType::Close => WebsocketResponse { messages: vec![] },
-            MessageType::Connect => WebsocketResponse { messages: vec![] },
-            MessageType::Ping => WebsocketResponse { messages: vec![] },
-            MessageType::Pong => WebsocketResponse { messages: vec![] },
-            MessageType::Other(_) => WebsocketResponse { messages: vec![] },
-        };
+            _ => {}
+        }
 
-        (serde_json::to_vec(&state).unwrap(), response)
+        (
+            serde_json::to_vec(&state).unwrap(),
+            WebsocketResponse { messages: vec![] },
+        )
     }
 }
 
@@ -559,18 +517,5 @@ impl MessageServerClient for Component {
 }
 
 struct Component;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StartChatRequest {
-    fs_path: String,
-    permissions: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StartChatResponse {
-    success: bool,
-    url: Option<String>,
-    error: Option<String>,
-}
 
 bindings::export!(Component with_types_in bindings);
