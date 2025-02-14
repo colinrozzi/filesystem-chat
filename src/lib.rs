@@ -493,7 +493,7 @@ impl WebSocketGuest for Component {
                                     let mut user_msg = Message::new(
                                         "user".to_string(),
                                         content.to_string(),
-                                        command["parent"].as_str().map(String::from),
+                                        state.head.clone(),
                                     );
 
                                     // Extract filesystem commands if present
