@@ -74,6 +74,21 @@ struct FsResult {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum FsResponseData {
+    FileList(Vec<String>),
+    FileContent(String),
+    None,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FsResponse {
+    success: bool,
+    data: Option<FsResponseData>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct Request {
     _type: String,
     data: Action,
@@ -324,16 +339,28 @@ Remember to:
                     "content": cmd.content
                 });
 
+                // In the request handling code:
                 match request(fs_proxy_id, &serde_json::to_vec(&req).unwrap()) {
                     Ok(response) => {
                         log(&format!("Got response from proxy_id: {:?}", response));
-                        if let Ok(resp) = serde_json::from_slice::<Value>(&response) {
+                        if let Ok(resp) = serde_json::from_slice::<FsResponse>(&response) {
                             results.push(FsResult {
-                                success: resp["success"].as_bool().unwrap_or(false),
-                                operation: cmd.operation,
+                                success: resp.success,
+                                operation: cmd.operation.clone(),
                                 path: cmd.path,
-                                data: resp["data"].as_str().map(|s| s.to_string()),
-                                error: resp["error"].as_str().map(|s| s.to_string()),
+                                data: match (cmd.operation.as_str(), resp.data) {
+                                    // For list-files, handle vector of strings
+                                    ("list-files", Some(FsResponseData::FileList(files))) => {
+                                        Some(files.join(", "))
+                                    }
+                                    // For read-file, handle string content
+                                    ("read-file", Some(FsResponseData::FileContent(content))) => {
+                                        Some(content)
+                                    }
+                                    // For operations that don't return data
+                                    _ => None,
+                                },
+                                error: resp.error,
                             });
                         } else {
                             results.push(FsResult {
