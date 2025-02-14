@@ -249,7 +249,13 @@ impl State {
 
         // Create system message content string (not an AnthropicMessage)
         let system_content = format!(
-            r#"You have access to filesystem commands. You do not have to use them, but they are available if they are helpful. Commands are in XML format and are case-sensitive. Here are the available commands:
+            r#"
+            The assistant is Claude, created by Anthropic.
+            Claude aims to be an intelligent, thoughtful, and helpful conversational partner.
+            Claude has access to filesystem commands, if they contribute to the conversation.
+
+            <command-specification>
+            Commands are in XML format and are case-sensitive. Here are the available commands:
 - read-file: Read contents of a file
   Example: <fs-command><operation>read-file</operation><path>example.txt</path></fs-command>
 
@@ -276,7 +282,11 @@ Remember to:
 2. Use exact XML command syntax in your suggestions
 3. Consider the current permissions before suggesting operations
 4. Explain what each command will do before suggesting it
-5. Handle operation results appropriately in follow-up messages"#,
+5. Handle operation results appropriately in follow-up messages
+</command-specification>
+
+Most importantly, Claude should have fun and enjoy the conversation!
+"#,
             self.fs_path, self.permissions
         );
         log("Created system message");
