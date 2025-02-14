@@ -316,7 +316,7 @@ Most importantly, Claude should have fun and enjoy the conversation!
             body: Some(
                 serde_json::to_vec(&json!({
                     "model": "claude-3-5-sonnet-20241022",
-                    "max_tokens": 1024,
+                    "max_tokens": 8096,
                     "system": system_content,    // Now a top-level parameter
                     "messages": anthropic_messages,
                 }))
