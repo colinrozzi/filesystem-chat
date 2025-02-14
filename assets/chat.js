@@ -1,91 +1,178 @@
-class ChatConnection {
-    constructor() {
-        this.connect();
-        this.messageQueue = [];
-        this.retryCount = 0;
-        this.maxRetries = 5;
-        this.retryDelay = 1000;
-        this.messageCounter = 0;
-    }
+// State management
+let messageCache = new Map();
+let ws = null;
+let reconnectAttempts = 0;
+let selectedMessageId = null;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const WEBSOCKET_URL = 'ws://localhost:{{WEBSOCKET_PORT}}/';
 
-    connect() {
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsPort = {{WEBSOCKET_PORT}}; // This gets replaced by the server
-        this.ws = new WebSocket(`${wsProtocol}//${window.location.hostname}:${wsPort}`);
-        
-        this.ws.onopen = () => {
-            console.log('WebSocket connected');
-            this.updateStatus('Connected', true);
-            this.retryCount = 0;
-            
-            // Get message history
-            this.send({ type: 'get_messages' });
-            
-            // Send any queued messages
-            while (this.messageQueue.length > 0) {
-                const msg = this.messageQueue.shift();
-                this.send(msg);
-            }
-        };
+// UI Elements
+const messageInput = document.getElementById('messageInput');
+const messageArea = document.getElementById('messageArea');
+const loadingOverlay = document.getElementById('messageLoading');
 
-        this.ws.onclose = () => {
-            console.log('WebSocket disconnected');
-            this.updateStatus('Disconnected', false);
-            
-            if (this.retryCount < this.maxRetries) {
-                setTimeout(() => {
-                    this.retryCount++;
-                    this.connect();
-                }, this.retryDelay * Math.pow(2, this.retryCount));
-            }
-        };
+// Auto-resize textarea
+function adjustTextareaHeight() {
+    messageInput.style.height = 'auto';
+    messageInput.style.height = Math.min(messageInput.scrollHeight, 200) + 'px';
+}
 
-        this.ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-            this.updateStatus('Error', false);
-        };
+messageInput.addEventListener('input', adjustTextareaHeight);
 
-        this.ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            this.handleMessage(data);
-        };
-    }
-
-    updateStatus(status, connected) {
-        const statusDot = document.querySelector('.status-dot');
-        const statusText = document.querySelector('.status-text');
-        
-        statusDot.className = 'status-dot ' + (connected ? 'connected' : 'disconnected');
-        statusText.textContent = status;
-    }
-
-    send(message) {
-        if (this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify(message));
-        } else {
-            this.messageQueue.push(message);
-        }
-    }
-
-    handleMessage(data) {
-        if (data.type === 'message_update') {
-            if (data.message) {
-                // Single message update
-                addMessage(data.message);
-            } else if (data.messages) {
-                // Full message history
-                const container = document.getElementById('messageContainer');
-                // Keep the system message
-                const systemMessage = container.firstElementChild;
-                container.innerHTML = '';
-                container.appendChild(systemMessage);
-                // Add all messages in order
-                data.messages.forEach(addMessage);
-            }
-        }
+// WebSocket connection management
+function updateConnectionStatus(status) {
+    const statusElement = document.querySelector('.connection-status');
+    if (!statusElement) return;
+    
+    statusElement.className = 'connection-status ' + status;
+    
+    switch(status) {
+        case 'connected':
+            statusElement.textContent = 'Connected';
+            break;
+        case 'disconnected':
+            statusElement.textContent = 'Disconnected';
+            break;
+        case 'connecting':
+            statusElement.textContent = 'Connecting...';
+            break;
     }
 }
 
+function connectWebSocket() {
+    updateConnectionStatus('connecting');
+    
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    
+    ws = new WebSocket(WEBSOCKET_URL);
+    
+    ws.onopen = () => {
+        console.log('WebSocket connected');
+        updateConnectionStatus('connected');
+        reconnectAttempts = 0;
+        // Request initial messages
+        sendWebSocketMessage({
+            type: 'get_messages'
+        });
+    };
+    
+    ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        updateConnectionStatus('disconnected');
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            reconnectAttempts++;
+            setTimeout(connectWebSocket, 1000 * Math.min(reconnectAttempts, 30));
+        }
+    };
+    
+    ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        updateConnectionStatus('disconnected');
+    };
+    
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            handleWebSocketMessage(data);
+        } catch (error) {
+            console.error('Error parsing WebSocket message:', error);
+        }
+    };
+}
+
+function sendWebSocketMessage(message) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(message));
+    } else {
+        console.warn('WebSocket not connected');
+        updateConnectionStatus('disconnected');
+    }
+}
+
+function handleWebSocketMessage(data) {
+    if (data.type === 'message_update') {
+        if (data.message) {
+            // Single message update
+            messageCache.set(data.message.id, data.message);
+        } else if (data.messages) {
+            // Update message cache with new messages
+            data.messages.forEach(msg => {
+                messageCache.set(msg.id, msg);
+            });
+        }
+        
+        // Remove any temporary messages
+        for (const [id, msg] of messageCache.entries()) {
+            if (id.startsWith('temp-')) {
+                messageCache.delete(id);
+            }
+        }
+        
+        // Render messages
+        renderMessages(Array.from(messageCache.values()), false);
+        
+        // Update head ID
+        updateHeadId(Array.from(messageCache.values()));
+    }
+}
+
+// Update head ID in title
+function updateHeadId(messages) {
+    const headElement = document.querySelector('.head-id');
+    if (messages && messages.length > 0) {
+        const lastMessage = messages[messages.length - 1];
+        headElement.textContent = `Head: ${lastMessage.id.slice(0, 8)}...`;
+    } else {
+        headElement.textContent = 'Head: None';
+    }
+}
+
+// Message handling
+function sendMessage() {
+    const text = messageInput.value.trim();
+    const sendButton = document.querySelector('.send-button');
+
+    if (!text) return;
+
+    try {
+        messageInput.disabled = true;
+        sendButton.disabled = true;
+
+        // Create temporary message for immediate display
+        const tempMsg = {
+            role: 'user',
+            content: text,
+            id: 'temp-' + Date.now()
+        };
+        messageCache.set(tempMsg.id, tempMsg);
+        
+        // Extract any filesystem commands
+        const fs_commands = extractFsCommands(text);
+        
+        // Show messages with temporary one
+        renderMessages([...messageCache.values()], true);
+
+        // Send message to server
+        sendWebSocketMessage({
+            type: 'send_message',
+            content: text,
+            fs_commands: fs_commands.length > 0 ? fs_commands : undefined
+        });
+
+        // Clear input
+        messageInput.value = '';
+        messageInput.style.height = '2.5rem';
+        messageInput.focus();
+    } catch (error) {
+        console.error('Error sending message:', error);
+        alert('Failed to send message. Please try again.');
+    } finally {
+        messageInput.disabled = false;
+        sendButton.disabled = false;
+    }
+}
+
+// Extract filesystem commands from message
 function extractFsCommands(content) {
     const parser = new DOMParser();
     const commands = [];
@@ -115,22 +202,7 @@ function extractFsCommands(content) {
     return commands;
 }
 
-function highlightXMLCommands(content) {
-    // Replace XML tags with highlighted versions
-    return content.replace(/<fs-command>[\s\S]*?<\/fs-command>/g, (match) => {
-        return `<pre class="xml-command">${escapeHtml(match)}</pre>`;
-    });
-}
-
-function escapeHtml(unsafe) {
-    return unsafe
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
+// Message formatting
 function formatFsResults(results) {
     if (!results || results.length === 0) return '';
     
@@ -161,69 +233,127 @@ function formatFsResults(results) {
     `;
 }
 
-function addMessage(message) {
-    const container = document.getElementById('messageContainer');
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${message.role}`;
+function formatMessage(content) {
+    // First escape HTML and convert newlines to <br>
+    let text = escapeHtml(content).replace(/\n/g, '<br>');
     
-    let content = message.content;
+    // Format filesystem commands
+    text = text.replace(/<fs-command>[\s\S]*?<\/fs-command>/g, (match) => {
+        return `<pre class="xml-command">${match}</pre>`;
+    });
     
-    // Check for filesystem operations in XML format
-    if (content.includes('<fs-command>')) {
-        content = highlightXMLCommands(content);
-    }
-    
-    messageDiv.innerHTML = content;
-    
-    // Add filesystem results if present
-    if (message.fs_results) {
-        messageDiv.innerHTML += formatFsResults(message.fs_results);
-    }
-    
-    container.appendChild(messageDiv);
-    container.scrollTop = container.scrollHeight;
+    return text;
 }
 
-// Set up the chat connection
-const chat = new ChatConnection();
+// Message rendering
+function renderMessages(messages, isTyping = false) {
+    // Sort messages by their sequence in the chat
+    const sortedMessages = messages.sort((a, b) => {
+        // If a message has a parent, it comes after that parent
+        if (a.parent === b.id) return 1;
+        if (b.parent === a.id) return -1;
+        return 0;
+    });
 
-// Handle message form submission
-document.addEventListener('DOMContentLoaded', () => {
-    const messageForm = document.getElementById('messageForm');
-    const messageInput = document.getElementById('messageInput');
+    // Keep the system message at the start
+    const systemMessage = messageArea.querySelector('.system-message');
+    
+    messageArea.innerHTML = '';
+    if (systemMessage) {
+        messageArea.appendChild(systemMessage);
+    }
 
-    messageForm.addEventListener('submit', (e) => {
-        e.preventDefault(); // Prevent form submission
-        
-        const content = messageInput.value.trim();
-        if (!content) return;
-        
-        // Extract any filesystem commands
-        const fs_commands = extractFsCommands(content);
-        
-        // Send the message
-        chat.send({
-            type: 'send_message',
-            content,
-            fs_commands: fs_commands.length > 0 ? fs_commands : undefined
+    if (sortedMessages.length === 0 && !isTyping) {
+        return;
+    }
+
+    const container = document.createElement('div');
+    container.className = 'message-container';
+    container.innerHTML = `
+        ${sortedMessages.map(msg => `
+            <div class="message ${msg.role} ${msg.id === selectedMessageId ? 'selected' : ''}" 
+                 data-id="${msg.id}">
+                ${formatMessage(msg.content)}
+                ${msg.fs_results ? formatFsResults(msg.fs_results) : ''}
+                <div class="message-actions">
+                    <button class="message-action-button copy-button" onclick="copyMessageId('${msg.id}', this)">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Copy ID
+                    </button>
+                </div>
+            </div>
+        `).join('')}
+        ${isTyping ? `
+            <div class="typing-indicator">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        ` : ''}
+    `;
+
+    messageArea.appendChild(container);
+    messageArea.scrollTop = messageArea.scrollHeight;
+}
+
+// Utility functions
+function escapeHtml(unsafe) {
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function copyMessageId(messageId, button) {
+    navigator.clipboard.writeText(messageId)
+        .then(() => {
+            const originalText = button.textContent;
+            button.textContent = 'Copied!';
+            setTimeout(() => {
+                button.textContent = originalText;
+            }, 1000);
+        })
+        .catch(err => {
+            console.error('Failed to copy message ID:', err);
+            alert('Failed to copy message ID');
         });
-        
-        // Clear the input
-        messageInput.value = '';
-        messageInput.style.height = 'auto';
-    });
+}
 
-    // Handle input height adjustment
-    messageInput.addEventListener('input', () => {
-        messageInput.style.height = 'auto';
-        messageInput.style.height = messageInput.scrollHeight + 'px';
-    });
+// Event listeners
+document.addEventListener('DOMContentLoaded', () => {
+    connectWebSocket();
 
-    // Handle Shift+Enter for new lines
-    messageInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            messageForm.dispatchEvent(new Event('submit'));
+    // Setup message input handling
+    messageInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            sendMessage();
         }
     });
+
+    // Global keyboard shortcut for focusing input
+    document.addEventListener('keydown', (event) => {
+        if (event.key === '/' && document.activeElement !== messageInput) {
+            event.preventDefault();
+            messageInput.focus();
+        }
+    });
+});
+
+// Handle visibility changes
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && (!ws || ws.readyState !== WebSocket.OPEN)) {
+        connectWebSocket();
+    }
+});
+
+// Cleanup on page unload
+window.addEventListener('unload', () => {
+    if (ws) {
+        ws.close();
+    }
 });

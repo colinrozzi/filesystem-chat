@@ -4,50 +4,59 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Filesystem Chat</title>
-    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="chat-container">
-        <div class="chat-header">
-            <h1>Filesystem Chat</h1>
-            <div class="status-indicator">
-                <span class="status-dot"></span>
-                <span class="status-text">Connecting...</span>
+    <div class="container">
+        <div class="main-chat">
+            <div class="title-bar">
+                <div class="title-info">
+                    <div class="head-id">Head: None</div>
+                    <div id="connectionStatus" class="connection-status disconnected">
+                        Disconnected
+                    </div>
+                </div>
             </div>
-        </div>
-
-        <div class="chat-messages" id="messageContainer">
-            <!-- Initial help message -->
-            <div class="system-message">
-                <p>You can use filesystem commands in your messages using XML tags:</p>
-                <pre class="xml-command">
+            <div class="message-area-container">
+                <div id="messageLoading" class="loading-overlay">
+                    <div class="loading-spinner"></div>
+                </div>
+                <div id="messageArea" class="message-area">
+                    <!-- System message -->
+                    <div class="system-message">
+                        <p>You can use filesystem commands in your messages using XML tags:</p>
+                        <pre class="xml-command">
 &lt;fs-command&gt;
     &lt;operation&gt;read-file&lt;/operation&gt;
     &lt;path&gt;example.txt&lt;/path&gt;
 &lt;/fs-command&gt;</pre>
-                <p>Available commands:</p>
-                <ul>
-                    <li><code>read-file</code> - Read a file's contents</li>
-                    <li><code>write-file</code> - Write to a file</li>
-                    <li><code>list-files</code> - List directory contents</li>
-                    <li><code>create-dir</code> - Create a directory</li>
-                    <li><code>delete-file</code> - Delete a file</li>
-                    <li><code>delete-dir</code> - Delete a directory</li>
-                </ul>
+                        <p>Available commands:</p>
+                        <ul>
+                            <li><code>read-file</code> - Read a file's contents</li>
+                            <li><code>write-file</code> - Write to a file</li>
+                            <li><code>list-files</code> - List directory contents</li>
+                            <li><code>create-dir</code> - Create a directory</li>
+                            <li><code>delete-file</code> - Delete a file</li>
+                            <li><code>delete-dir</code> - Delete a directory</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="input-area">
+                <div class="input-container">
+                    <textarea id="messageInput" class="message-input" 
+                        placeholder="Type your message... (Shift+Enter for new line)"
+                        rows="1"></textarea>
+                    <button onclick="sendMessage()" class="send-button">
+                        Send
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M5 12h14m-6-6l6 6-6 6" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                    </button>
+                </div>
             </div>
         </div>
-
-        <div class="chat-input">
-            <form id="messageForm">
-                <textarea 
-                    id="messageInput" 
-                    placeholder="Type your message... (Shift+Enter for new line)"
-                    rows="1"
-                ></textarea>
-                <button type="submit">Send</button>
-            </form>
-        </div>
     </div>
-    <script src="/chat.js"></script>
+    <script src="chat.js"></script>
 </body>
 </html>
