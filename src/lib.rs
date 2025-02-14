@@ -2,9 +2,7 @@ mod bindings;
 
 use bindings::exports::ntwk::theater::actor::Guest as ActorGuest;
 use bindings::exports::ntwk::theater::http_server::Guest as HttpGuest;
-use bindings::exports::ntwk::theater::http_server::{
-    HttpRequest as OtherHttpRequest, HttpResponse,
-};
+use bindings::exports::ntwk::theater::http_server::HttpResponse;
 use bindings::exports::ntwk::theater::message_server_client::Guest as MessageServerClient;
 use bindings::exports::ntwk::theater::websocket_server::Guest as WebSocketGuest;
 use bindings::exports::ntwk::theater::websocket_server::{
@@ -173,6 +171,7 @@ impl State {
         &self,
         messages: Vec<Message>,
     ) -> Result<String, Box<dyn std::error::Error>> {
+        log("Starting generate_response");
         // Create system message with filesystem capabilities explanation
         let system_message = AnthropicMessage {
             role: "system".to_string(),
@@ -214,12 +213,18 @@ Remember to:
             ),
         };
 
+        log("Created system message");
+
         // Combine system message with conversation history
         let mut anthropic_messages = vec![system_message];
         anthropic_messages.extend(messages.iter().map(|msg| AnthropicMessage {
             role: msg.role.clone(),
             content: msg.content.clone(),
         }));
+        log(&format!(
+            "Created request with {} messages",
+            anthropic_messages.len()
+        ));
 
         let request = HttpRequest {
             method: "POST".to_string(),
@@ -238,8 +243,10 @@ Remember to:
                 .unwrap(),
             ),
         };
+        log("Created HTTP request");
 
         let http_response = send_http(&request);
+        log(&format!("Got HTTP response: {:?}", http_response));
 
         if let Some(body) = http_response.body {
             if let Ok(response_data) = serde_json::from_slice::<Value>(&body) {
@@ -473,6 +480,7 @@ impl HttpGuest for Component {
 
 impl WebSocketGuest for Component {
     fn handle_message(message: WebsocketMessage, state: Json) -> (Json, WebsocketResponse) {
+        log(&format!("Received message: {:?}", message));
         let mut state: State = serde_json::from_slice(&state).unwrap();
 
         match message.ty {
@@ -481,7 +489,9 @@ impl WebSocketGuest for Component {
                     if let Ok(command) = serde_json::from_str::<Value>(&text) {
                         match command["type"].as_str() {
                             Some("send_message") => {
+                                log("Matched send_message command");
                                 if let Some(content) = command["content"].as_str() {
+                                    log(&format!("Processing content: {}", content));
                                     // Create initial user message
                                     let mut user_msg = Message::new(
                                         "user".to_string(),
@@ -505,6 +515,7 @@ impl WebSocketGuest for Component {
 
                                     // Save the message first
                                     if let Ok(msg_id) = state.save_message(&user_msg) {
+                                        log(&format!("Saved user message with id: {}", msg_id));
                                         let mut user_msg = user_msg.with_id(msg_id.clone());
                                         state.head = Some(msg_id);
 
@@ -522,10 +533,18 @@ impl WebSocketGuest for Component {
                                         }
 
                                         // Get message history and generate response
+                                        log("Attempting to get message histor");
                                         if let Ok(messages) = state.get_message_history() {
+                                            log(&format!(
+                                                "Got message history with {} messages",
+                                                messages.len()
+                                            ));
+
+                                            log("Attempting to generate response");
                                             if let Ok(ai_response) =
                                                 state.generate_response(messages)
                                             {
+                                                log("Successfully generated AI response");
                                                 let ai_msg = Message::new(
                                                     "assistant".to_string(),
                                                     ai_response,
