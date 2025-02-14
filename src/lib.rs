@@ -326,6 +326,7 @@ Remember to:
 
                 match request(fs_proxy_id, &serde_json::to_vec(&req).unwrap()) {
                     Ok(response) => {
+                        log(&format!("Got response from proxy_id: {:?}", response));
                         if let Ok(resp) = serde_json::from_slice::<Value>(&response) {
                             results.push(FsResult {
                                 success: resp["success"].as_bool().unwrap_or(false),
