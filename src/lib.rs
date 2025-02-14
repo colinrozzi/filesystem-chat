@@ -539,14 +539,68 @@ impl WebSocketGuest for Component {
 
                                             log("Attempting to generate response");
                                             if let Ok(ai_response) =
-                                                state.generate_response(messages)
+                                            state.generate_response(messages)
                                             {
-                                                log("Successfully generated AI response");
-                                                let ai_msg = Message::new(
-                                                    "assistant".to_string(),
-                                                    ai_response,
-                                                    Some(user_msg.id.clone().unwrap()),
-                                                );
+                                            log("Successfully generated AI response");
+                                            
+                                            // Parse fs commands from the response
+                                            let mut fs_commands = Vec::new();
+                                            
+                                            // Simple XML parsing for fs-command tags
+                                    let response_parts: Vec<&str> = ai_response.split("<fs-command>").collect();
+                                    for part in response_parts.iter().skip(1) {
+                                        if let Some(cmd_end) = part.find("</fs-command>") {
+                                            let cmd_xml = &part[..cmd_end];
+                                            
+                                            // Extract operation
+                                            if let (Some(op_start), Some(op_end)) = (
+                                                cmd_xml.find("<operation>"),
+                                                cmd_xml.find("</operation>")
+                                            ) {
+                                                let operation = &cmd_xml[op_start + 11..op_end];
+                                                
+                                                // Extract path
+                                                if let (Some(path_start), Some(path_end)) = (
+                                                    cmd_xml.find("<path>"),
+                                                    cmd_xml.find("</path>")
+                                                ) {
+                                                    let path = &cmd_xml[path_start + 6..path_end];
+                                                    
+                                                    // Extract content if present
+                                                    let content = if let (Some(content_start), Some(content_end)) = (
+                                                        cmd_xml.find("<content>"),
+                                                        cmd_xml.find("</content>")
+                                                    ) {
+                                                        Some(cmd_xml[content_start + 9..content_end].to_string())
+                                                    } else {
+                                                        None
+                                                    };
+                                                    
+                                                    fs_commands.push(FsCommand {
+                                                        operation: operation.to_string(),
+                                                        path: path.to_string(),
+                                                        content,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Create AI message with parsed commands
+                                    let mut ai_msg = Message::new(
+                                        "assistant".to_string(),
+                                        ai_response.clone(),
+                                        Some(user_msg.id.clone().unwrap()),
+                                    );
+                                    
+                                    // Add commands if any were found
+                                    if !fs_commands.is_empty() {
+                                        ai_msg.fs_commands = Some(fs_commands.clone());
+                                        
+                                        // Execute commands and store results
+                                        let results = state.process_fs_commands(fs_commands);
+                                        ai_msg.fs_results = Some(results);
+                                    }
 
                                                 // Save AI message
                                                 if let Ok(ai_msg_id) = state.save_message(&ai_msg) {
