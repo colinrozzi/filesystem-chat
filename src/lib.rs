@@ -342,9 +342,8 @@ Remember to:
 
         match operation {
             "read-file" | "list-files" => self.permissions.contains(&"read".to_string()),
-            "write-file" | "create-dir" | "delete-file" | "delete-dir" => {
-                self.permissions.contains(&"write".to_string())
-            }
+            "write-file" | "create-dir" => self.permissions.contains(&"write".to_string()),
+            "delete-dir" | "delete-file" => self.permissions.contains(&"delete".to_string()),
             _ => false,
         }
     }
@@ -457,6 +456,7 @@ impl ActorGuest for Component {
 version = "0.1.0"
 description = "A proxy actor that provides controlled access to the filesystem"
 component_path = "/Users/colinrozzi/work/actors/fs-proxy/target/wasm32-unknown-unknown/release/fs_proxy.wasm"
+init_data = "/Users/colinrozzi/work/actors/filesystem-chat/assets/data/fs_proxy.json"
 
 [interface]
 implements = "ntwk:theater/actor"
@@ -472,6 +472,20 @@ config = {{ path = "{}" }}
 "#,
             init_data.fs_path
         );
+
+        // Write init data to data directory
+        // init data should contain the permissions the fs-proxy should be started with
+        let init_data_path = "data/fs_proxy.json";
+        let fs_proxy_init_data = json!({
+            "permissions": init_data.permissions
+        });
+        if let Err(e) = write_file(
+            init_data_path,
+            &serde_json::to_string(&fs_proxy_init_data).unwrap(),
+        ) {
+            log(&format!("Failed to create init data: {}", e));
+            return vec![];
+        }
 
         // Write manifest to data directory
         let manifest_path = "data/fs_proxy.toml";
