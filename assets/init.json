@@ -1,5 +1,5 @@
 {
-	"store_id" :"416ea277-7eb2-47c5-a0e3-631eb2685e2b",
+	"store_id" : "e760ef31-ad61-4ebb-bcdd-aa4b0a55f327",
 	"websocket_port" : 8081,
 	"fs_path" : "/Users/colinrozzi/work/actors/filesystem-chat/",
 	"permissions" : ["read", "write"]

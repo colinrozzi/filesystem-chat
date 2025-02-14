@@ -249,8 +249,7 @@ impl State {
 
         // Create system message content string (not an AnthropicMessage)
         let system_content = format!(
-            r#"You are a helpful AI assistant with filesystem access capabilities. Users and Assistants can interact with the filesystem using XML commands in their messages.
-Available commands:
+            r#"You have access to filesystem commands. You do not have to use them, but they are available if they are helpful. Commands are in XML format and are case-sensitive. Here are the available commands:
 - read-file: Read contents of a file
   Example: <fs-command><operation>read-file</operation><path>example.txt</path></fs-command>
 
