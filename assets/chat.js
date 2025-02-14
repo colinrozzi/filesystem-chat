@@ -41,9 +41,6 @@ function updateConnectionStatus(status) {
 
 function connectWebSocket() {
     updateConnectionStatus('connecting');
-    
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    
     ws = new WebSocket(WEBSOCKET_URL);
     
     ws.onopen = () => {
@@ -95,7 +92,7 @@ function handleWebSocketMessage(data) {
             // Single message update
             messageCache.set(data.message.id, data.message);
         } else if (data.messages) {
-            // Update message cache with new messages
+            // Multiple message update
             data.messages.forEach(msg => {
                 messageCache.set(msg.id, msg);
             });
@@ -128,7 +125,7 @@ function updateHeadId(messages) {
 }
 
 // Message handling
-function sendMessage() {
+async function sendMessage() {
     const text = messageInput.value.trim();
     const sendButton = document.querySelector('.send-button');
 
@@ -142,7 +139,9 @@ function sendMessage() {
         const tempMsg = {
             role: 'user',
             content: text,
-            id: 'temp-' + Date.now()
+            id: 'temp-' + Date.now(),
+            parent: Array.from(messageCache.values())
+                .find(msg => msg.id === selectedMessageId)?.id
         };
         messageCache.set(tempMsg.id, tempMsg);
         
@@ -202,6 +201,43 @@ function extractFsCommands(content) {
     return commands;
 }
 
+// Message actions
+function handleMessageClick(event) {
+    const messageElement = event.target.closest('.message');
+    if (!messageElement) return;
+
+    // Don't trigger if clicking action button
+    if (event.target.closest('.message-action-button')) return;
+
+    const messageId = messageElement.dataset.id;
+    
+    // If clicking the same message, deselect it
+    if (selectedMessageId === messageId) {
+        selectedMessageId = null;
+    } else {
+        selectedMessageId = messageId;
+    }
+    renderMessages([...messageCache.values()], false);
+}
+
+function copyMessageId(messageId) {
+    navigator.clipboard.writeText(messageId)
+        .then(() => {
+            const button = document.querySelector(`[data-id="${messageId}"] .copy-button`);
+            if (button) {
+                const originalText = button.textContent;
+                button.textContent = 'Copied!';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 1000);
+            }
+        })
+        .catch(err => {
+            console.error('Failed to copy message ID:', err);
+            alert('Failed to copy message ID');
+        });
+}
+
 // Message formatting
 function formatFsResults(results) {
     if (!results || results.length === 0) return '';
@@ -237,8 +273,14 @@ function formatMessage(content) {
     // First escape HTML and convert newlines to <br>
     let text = escapeHtml(content).replace(/\n/g, '<br>');
     
+    // Format code blocks
+    text = text.replace(/```([^`]+)```/g, (match, code) => `<pre><code>${code}</code></pre>`);
+    
+    // Format inline code
+    text = text.replace(/`([^`]+)`/g, (match, code) => `<code>${code}</code>`);
+    
     // Format filesystem commands
-    text = text.replace(/<fs-command>[\s\S]*?<\/fs-command>/g, (match) => {
+    text = text.replace(/&lt;fs-command&gt;[\s\S]*?&lt;\/fs-command&gt;/g, (match) => {
         return `<pre class="xml-command">${match}</pre>`;
     });
     
@@ -276,7 +318,7 @@ function renderMessages(messages, isTyping = false) {
                 ${formatMessage(msg.content)}
                 ${msg.fs_results ? formatFsResults(msg.fs_results) : ''}
                 <div class="message-actions">
-                    <button class="message-action-button copy-button" onclick="copyMessageId('${msg.id}', this)">
+                    <button class="message-action-button copy-button">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                             <path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
@@ -294,6 +336,20 @@ function renderMessages(messages, isTyping = false) {
         ` : ''}
     `;
 
+    // Set up event listeners for messages and actions
+    const messages_elements = container.querySelectorAll('.message');
+    messages_elements.forEach(messageElement => {
+        messageElement.addEventListener('click', handleMessageClick);
+        
+        const copyButton = messageElement.querySelector('.copy-button');
+        if (copyButton) {
+            copyButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                copyMessageId(messageElement.dataset.id);
+            });
+        }
+    });
+
     messageArea.appendChild(container);
     messageArea.scrollTop = messageArea.scrollHeight;
 }
@@ -306,21 +362,6 @@ function escapeHtml(unsafe) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
-}
-
-function copyMessageId(messageId, button) {
-    navigator.clipboard.writeText(messageId)
-        .then(() => {
-            const originalText = button.textContent;
-            button.textContent = 'Copied!';
-            setTimeout(() => {
-                button.textContent = originalText;
-            }, 1000);
-        })
-        .catch(err => {
-            console.error('Failed to copy message ID:', err);
-            alert('Failed to copy message ID');
-        });
 }
 
 // Event listeners
