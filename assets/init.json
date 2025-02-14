@@ -1,5 +1,5 @@
 {
-	"store_id" : "e31321ea-24cb-42ff-8aec-740cd8c4c881",
+	"store_id" :"5bb43ea4-729e-4dfb-b01b-4b94bdaf1973",
 	"websocket_port" : 8081,
 	"fs_path" : "/Users/colinrozzi/work/tmp/throwaway",
 	"permissions" : ["read"]

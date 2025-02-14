@@ -1,5 +1,3 @@
-
-
 mod bindings;
 
 use bindings::exports::ntwk::theater::actor::Guest as ActorGuest;
@@ -193,7 +191,7 @@ impl State {
 
         // Create system message content string (not an AnthropicMessage)
         let system_content = format!(
-            r#"You are a helpful AI assistant with filesystem access capabilities. Users can interact with the filesystem using XML commands in their messages.
+            r#"You are a helpful AI assistant with filesystem access capabilities. Users and Assistants can interact with the filesystem using XML commands in their messages.
 Available commands:
 - read-file: Read contents of a file
   Example: <fs-command><operation>read-file</operation><path>example.txt</path></fs-command>
@@ -274,17 +272,39 @@ Remember to:
         Err("Failed to generate response".into())
     }
 
+    fn allowed_operation(&self, operation: &str) -> bool {
+        // read:
+        // - read-file
+        // - list-files
+        // write:
+        // - write-file
+        // - create-dir
+        // - delete-file
+        // - delete-dir
+
+        match operation {
+            "read-file" | "list-files" => self.permissions.contains(&"read".to_string()),
+            "write-file" | "create-dir" | "delete-file" | "delete-dir" => {
+                self.permissions.contains(&"write".to_string())
+            }
+            _ => false,
+        }
+    }
+
     fn process_fs_commands(&self, commands: Vec<FsCommand>) -> Vec<FsResult> {
         let mut results = Vec::new();
 
         for cmd in commands {
-            if !self.permissions.contains(&cmd.operation) {
+            if !self.allowed_operation(&cmd.operation) {
                 results.push(FsResult {
                     success: false,
-                    operation: cmd.operation,
+                    operation: cmd.operation.clone(),
                     path: cmd.path,
                     data: None,
-                    error: Some("Permission denied".to_string()),
+                    error: Some(format!(
+                        "Operation '{}' not permitted, permitted operations: {:?}",
+                        cmd.operation, self.permissions
+                    )),
                 });
                 continue;
             }
@@ -555,7 +575,7 @@ impl WebSocketGuest for Component {
                                         }
 
                                         // Get message history and generate response
-                                        log("Attempting to get message histor");
+                                        log("Attempting to get message history");
                                         if let Ok(messages) = state.get_message_history() {
                                             log(&format!(
                                                 "Got message history with {} messages",
