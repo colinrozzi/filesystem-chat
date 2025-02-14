@@ -204,6 +204,49 @@ impl State {
     ) -> Result<String, Box<dyn std::error::Error>> {
         log("Starting generate_response");
 
+        // Only get preceding messages if this isn't the first message
+        let command_results = if messages.len() > 1 {
+            log("Getting last two messages");
+            let last_messages = messages.iter().rev().take(2).collect::<Vec<_>>();
+
+            last_messages.iter().filter_map(|msg| {
+            if let Some(results) = &msg.fs_results {
+                Some(format!(
+                    "<command-results role=\"{}\">\n{}\n</command-results>",
+                    msg.role,
+                    results.iter().map(|r| format!(
+                        "  <result>\n    <operation>{}</operation>\n    <path>{}</path>\n    <success>{}</success>{}{}\n  </result>",
+                        r.operation,
+                        r.path,
+                        r.success,
+                        r.data.as_ref().map(|d| format!("\n    <data>{}</data>", d)).unwrap_or_default(),
+                        r.error.as_ref().map(|e| format!("\n    <error>{}</error>", e)).unwrap_or_default(),
+                    )).collect::<Vec<_>>().join("\n")
+                ))
+            } else {
+                None
+            }
+        }).collect::<Vec<_>>().join("\n")
+        } else {
+            String::new() // Empty string for the first message
+        };
+        log(&format!("Command results: {}", command_results));
+
+        // Add command results to the user's message content if there are any
+        let messages: Vec<AnthropicMessage> = messages
+            .iter()
+            .map(|msg| {
+                let mut content = msg.content.clone();
+                if msg.role == "user" && !command_results.is_empty() {
+                    content = format!("{}\n\n{}", content, command_results);
+                }
+                AnthropicMessage {
+                    role: msg.role.clone(),
+                    content,
+                }
+            })
+            .collect();
+
         // Create system message content string (not an AnthropicMessage)
         let system_content = format!(
             r#"You are a helpful AI assistant with filesystem access capabilities. Users and Assistants can interact with the filesystem using XML commands in their messages.
