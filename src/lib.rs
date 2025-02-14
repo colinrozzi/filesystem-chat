@@ -172,11 +172,10 @@ impl State {
         messages: Vec<Message>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         log("Starting generate_response");
-        // Create system message with filesystem capabilities explanation
-        let system_message = AnthropicMessage {
-            role: "system".to_string(),
-            content: format!(
-                r#"You are a helpful AI assistant with filesystem access capabilities. Users can interact with the filesystem using XML commands in their messages.
+
+        // Create system message content string (not an AnthropicMessage)
+        let system_content = format!(
+            r#"You are a helpful AI assistant with filesystem access capabilities. Users can interact with the filesystem using XML commands in their messages.
 Available commands:
 - read-file: Read contents of a file
   Example: <fs-command><operation>read-file</operation><path>example.txt</path></fs-command>
@@ -196,10 +195,6 @@ Available commands:
 - delete-dir: Delete a directory
   Example: <fs-command><operation>delete-dir</operation><path>old_folder</path></fs-command>
 
-When a user's message contains filesystem commands, you will see the results in their next message.
-You can suggest filesystem operations when relevant, showing the exact XML commands they should use.
-Always format filesystem paths according to the user's context and validate that paths make sense.
-
 Current filesystem root path: {}
 Current permissions: {:?}
 
@@ -209,23 +204,24 @@ Remember to:
 3. Consider the current permissions before suggesting operations
 4. Explain what each command will do before suggesting it
 5. Handle operation results appropriately in follow-up messages"#,
-                self.fs_path, self.permissions
-            ),
-        };
-
+            self.fs_path, self.permissions
+        );
         log("Created system message");
 
-        // Combine system message with conversation history
-        let mut anthropic_messages = vec![system_message];
-        anthropic_messages.extend(messages.iter().map(|msg| AnthropicMessage {
-            role: msg.role.clone(),
-            content: msg.content.clone(),
-        }));
+        // Create messages array without system message
+        let anthropic_messages: Vec<AnthropicMessage> = messages
+            .iter()
+            .map(|msg| AnthropicMessage {
+                role: msg.role.clone(),
+                content: msg.content.clone(),
+            })
+            .collect();
         log(&format!(
             "Created request with {} messages",
             anthropic_messages.len()
         ));
 
+        // Create HTTP request with system as top-level parameter
         let request = HttpRequest {
             method: "POST".to_string(),
             uri: "https://api.anthropic.com/v1/messages".to_string(),
@@ -238,6 +234,7 @@ Remember to:
                 serde_json::to_vec(&json!({
                     "model": "claude-3-5-sonnet-20241022",
                     "max_tokens": 1024,
+                    "system": system_content,    // Now a top-level parameter
                     "messages": anthropic_messages,
                 }))
                 .unwrap(),
