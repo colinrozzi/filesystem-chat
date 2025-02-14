@@ -2,7 +2,9 @@ mod bindings;
 
 use bindings::exports::ntwk::theater::actor::Guest as ActorGuest;
 use bindings::exports::ntwk::theater::http_server::Guest as HttpGuest;
-use bindings::exports::ntwk::theater::http_server::{HttpRequest, HttpResponse};
+use bindings::exports::ntwk::theater::http_server::{
+    HttpRequest as OtherHttpRequest, HttpResponse,
+};
 use bindings::exports::ntwk::theater::message_server_client::Guest as MessageServerClient;
 use bindings::exports::ntwk::theater::websocket_server::Guest as WebSocketGuest;
 use bindings::exports::ntwk::theater::websocket_server::{
@@ -38,6 +40,13 @@ struct State {
     permissions: Vec<String>,
     head: Option<String>,
     websocket_port: u16,
+    api_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct AnthropicMessage {
+    role: String,
+    content: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -96,6 +105,8 @@ impl Message {
         self
     }
 }
+
+use bindings::ntwk::theater::http_client::{send_http, HttpRequest};
 
 impl State {
     fn save_message(&self, msg: &Message) -> Result<String, Box<dyn std::error::Error>> {
@@ -156,6 +167,49 @@ impl State {
 
         messages.reverse(); // Oldest first
         Ok(messages)
+    }
+
+    fn generate_response(
+        &self,
+        messages: Vec<Message>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let anthropic_messages: Vec<AnthropicMessage> = messages
+            .iter()
+            .map(|msg| AnthropicMessage {
+                role: msg.role.clone(),
+                content: msg.content.clone(),
+            })
+            .collect();
+
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            uri: "https://api.anthropic.com/v1/messages".to_string(),
+            headers: vec![
+                ("Content-Type".to_string(), "application/json".to_string()),
+                ("x-api-key".to_string(), self.api_key.clone()),
+                ("anthropic-version".to_string(), "2023-06-01".to_string()),
+            ],
+            body: Some(
+                serde_json::to_vec(&json!({
+                    "model": "claude-3-5-sonnet-20241022",
+                    "max_tokens": 1024,
+                    "messages": anthropic_messages,
+                }))
+                .unwrap(),
+            ),
+        };
+
+        let http_response = send_http(&request);
+
+        if let Some(body) = http_response.body {
+            if let Ok(response_data) = serde_json::from_slice::<Value>(&body) {
+                if let Some(text) = response_data["content"][0]["text"].as_str() {
+                    return Ok(text.to_string());
+                }
+            }
+        }
+
+        Err("Failed to generate response".into())
     }
 
     fn process_fs_commands(&self, commands: Vec<FsCommand>) -> Vec<FsResult> {
@@ -273,6 +327,18 @@ config = {{ path = "{}" }}
         let fs_proxy_id = spawn(full_manifest_path);
         log(&format!("Spawned fs-proxy actor: {}", fs_proxy_id));
 
+        // Read API key
+        log("Reading API key");
+        let res = read_file("api-key.txt");
+        if res.is_err() {
+            log("Failed to read API key");
+            return vec![];
+        }
+        let api_key = res.unwrap();
+        log("API key read");
+        let api_key = String::from_utf8(api_key).unwrap().trim().to_string();
+        log("API key loaded");
+
         let initial_state = State {
             store_id: init_data.store_id,
             fs_proxy_id: Some(fs_proxy_id),
@@ -280,6 +346,7 @@ config = {{ path = "{}" }}
             permissions: init_data.permissions,
             head: None,
             websocket_port: init_data.websocket_port,
+            api_key,
         };
 
         serde_json::to_vec(&initial_state).unwrap()
@@ -414,7 +481,44 @@ impl WebSocketGuest for Component {
                                             }
                                         }
 
-                                        // Send response with message
+                                        // Get message history and generate response
+                                        if let Ok(messages) = state.get_message_history() {
+                                            if let Ok(ai_response) =
+                                                state.generate_response(messages)
+                                            {
+                                                let ai_msg = Message::new(
+                                                    "assistant".to_string(),
+                                                    ai_response,
+                                                    Some(user_msg.id.clone().unwrap()),
+                                                );
+
+                                                // Save AI message
+                                                if let Ok(ai_msg_id) = state.save_message(&ai_msg) {
+                                                    state.head = Some(ai_msg_id.clone());
+                                                    let ai_msg_with_id = ai_msg.with_id(ai_msg_id);
+
+                                                    // Send both messages
+                                                    return (
+                                                        serde_json::to_vec(&state).unwrap(),
+                                                        WebsocketResponse {
+                                                            messages: vec![WebsocketMessage {
+                                                                ty: MessageType::Text,
+                                                                text: Some(
+                                                                    json!({
+                                                                        "type": "message_update",
+                                                                        "messages": [user_msg, ai_msg_with_id]
+                                                                    })
+                                                                    .to_string(),
+                                                                ),
+                                                                data: None,
+                                                            }],
+                                                        },
+                                                    );
+                                                }
+                                            }
+                                        }
+
+                                        // If we get here, something went wrong, just send the user message
                                         return (
                                             serde_json::to_vec(&state).unwrap(),
                                             WebsocketResponse {

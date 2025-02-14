@@ -13,6 +13,10 @@ type = "runtime"
 config = {}
 
 [[handlers]]
+type = "http-client"
+config = {}
+
+[[handlers]]
 type = "http-server"
 config = { port = 8080 }
 
