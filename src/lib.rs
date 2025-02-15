@@ -62,6 +62,8 @@ struct FsCommand {
     operation: String,
     path: String,
     content: Option<String>,
+    old_text: Option<String>,
+    new_text: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -270,6 +272,9 @@ impl State {
 
 - delete-file: Delete a file
   Example: <fs-command><operation>delete-file</operation><path>old.txt</path></fs-command>
+
+- edit-file: Edit content in a file by replacing text
+  Example: <fs-command><operation>edit-file</operation><path>file.txt</path><old_text>text to find</old_text><new_text>replacement text</new_text></fs-command>
 
 - delete-dir: Delete a directory
   Example: <fs-command><operation>delete-dir</operation><path>old_folder</path></fs-command>
@@ -733,11 +738,41 @@ impl WebSocketGuest for Component {
                                                                     None
                                                                 };
 
+                                                                // Extract old_text if present
+                                                                let old_text = if let (Some(old_text_start), Some(old_text_end)) = (
+                                                                    cmd_xml.find("<old_text>"),
+                                                                    cmd_xml.find("</old_text>"),
+                                                                ) {
+                                                                    Some(
+                                                                        cmd_xml[old_text_start + 10
+                                                                            ..old_text_end]
+                                                                            .to_string(),
+                                                                    )
+                                                                } else {
+                                                                    None
+                                                                };
+
+                                                                // Extract new_text if present
+                                                                let new_text = if let (Some(new_text_start), Some(new_text_end)) = (
+                                                                    cmd_xml.find("<new_text>"),
+                                                                    cmd_xml.find("</new_text>"),
+                                                                ) {
+                                                                    Some(
+                                                                        cmd_xml[new_text_start + 10
+                                                                            ..new_text_end]
+                                                                            .to_string(),
+                                                                    )
+                                                                } else {
+                                                                    None
+                                                                };
+
                                                                 fs_commands.push(FsCommand {
                                                                     operation: operation
                                                                         .to_string(),
                                                                     path: path.to_string(),
                                                                     content,
+                                                                    old_text,
+                                                                    new_text,
                                                                 });
                                                             }
                                                         }
