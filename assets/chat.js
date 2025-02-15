@@ -86,36 +86,33 @@ function sendWebSocketMessage(message) {
     }
 }
 
+// Update the WebSocket message handler
 function handleWebSocketMessage(data) {
-    if (data.type === 'message_update') {
-        if (data.message) {
-            // Single message update
-            messageCache.set(data.message.id, data.message);
-            if (data.message.fs_results) {
-                updateCommandResults(data.message);
-            }
-        } else if (data.messages) {
-            // Multiple message update
-            data.messages.forEach(msg => {
-                messageCache.set(msg.id, msg);
-                if (msg.fs_results) {
-                    updateCommandResults(msg);
-                }
+    try {
+        if (data.type === 'message_state_update') {
+            const { message, status, last_error } = data.message_state;
+            
+            // Update message in cache
+            messageCache.set(message.id, message);
+            
+            // Store processing state
+            processingStates.set(message.id, {
+                status,
+                lastError: last_error
             });
-        }
-        
-        // Remove any temporary messages
-        for (const [id, msg] of messageCache.entries()) {
-            if (id.startsWith('temp-')) {
-                messageCache.delete(id);
+            
+            renderMessages([...messageCache.values()], false);
+        } else if (data.type === 'message_update') {
+            // Handle bulk message updates (e.g., from get_messages)
+            if (data.messages) {
+                data.messages.forEach(msg => {
+                    messageCache.set(msg.id, msg);
+                });
             }
+            renderMessages([...messageCache.values()], false);
         }
-        
-        // Render messages
-        renderMessages(Array.from(messageCache.values()), false);
-        
-        // Update head ID
-        updateHeadId(Array.from(messageCache.values()));
+    } catch (error) {
+        console.error('Error handling WebSocket message:', error);
     }
 }
 
@@ -483,48 +480,44 @@ function retryMessage(messageId) {
 
 // Update the message rendering to show status and errors
 function renderMessage(msg) {
-    const processingState = processingStates.get(msg.id);
-    const isProcessing = processingState?.status === 'ProcessingCommands' 
-        || processingState?.status === 'GeneratingResponse';
-    const hasFailed = processingState?.status === 'Failed';
-    const isRetrying = processingState?.status === 'RetryScheduled';
+    const processState = processingStates.get(msg.id);
+    const isProcessing = processState?.status === 'ProcessingCommands' 
+        || processState?.status === 'GeneratingResponse';
+    const hasFailed = processState?.status === 'Failed';
     
     return `
         <div class="message ${msg.role} ${msg.id === selectedMessageId ? 'selected' : ''} 
                           ${isProcessing ? 'processing' : ''} 
-                          ${hasFailed ? 'failed' : ''} 
-                          ${isRetrying ? 'retrying' : ''}"
+                          ${hasFailed ? 'failed' : ''}"
              data-id="${msg.id}">
             ${formatMessage(msg.content)}
             
             ${hasFailed ? `
                 <div class="error-banner">
-                    <span class="error-message">${processingState.lastError}</span>
-                    ${processingState.status === 'RetryScheduled' ? `
-                        <span class="retry-message">
-                            Retrying in ${formatRetryTime(processingState.nextRetry)}
-                        </span>
+                    <span class="error-message">${processState.lastError || 'An error occurred'}</span>
+                    ${msg.retries < 3 ? `
+                        <button class="retry-button" onclick="retryMessage('${msg.id}')">
+                            Retry
+                        </button>
                     ` : ''}
-                    <button class="retry-button" onclick="retryMessage('${msg.id}')">
-                        Retry Now
-                    </button>
+                </div>
+            ` : ''}
+            
+            ${isProcessing ? `
+                <div class="processing-indicator">
+                    <span></span><span></span><span></span>
                 </div>
             ` : ''}
             
             <div class="message-actions">
-                ${renderMessageActions(msg)}
+                <button class="message-action-button copy-button" onclick="copyMessageId('${msg.id}')">
+                    Copy ID
+                </button>
             </div>
-            
-            ${isProcessing ? `
-                <div class="processing-indicator">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                </div>
-            ` : ''}
         </div>
     `;
 }
+
 
 function formatRetryTime(timestamp) {
     const now = Math.floor(Date.now() / 1000);

@@ -129,7 +129,6 @@ struct MessageState {
     status: MessageStatus,
     retries: u32,
     last_error: Option<String>,
-    next_retry: Option<u64>, // Unix timestamp
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -139,52 +138,19 @@ enum MessageStatus {
     GeneratingResponse,
     Completed,
     Failed,
-    RetryScheduled,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProcessingError {
-    error_type: String,
     message: String,
     retryable: bool,
-    suggested_wait: Option<u64>, // Seconds to wait before retry
 }
 
-impl ProcessingError {
-    fn from_http_response(response: &HttpResponse) -> Self {
-        // Parse error from Anthropic/Cloudflare response
-        if let Some(body) = &response.body {
-            if let Ok(error_json) = serde_json::from_slice::<Value>(body) {
-                if response.status == 529 {
-                    return ProcessingError {
-                        error_type: "overloaded_error".to_string(),
-                        message: "Service is currently overloaded".to_string(),
-                        retryable: true,
-                        suggested_wait: Some(30), // Start with 30 second backoff
-                    };
-                }
-
-                // Handle other error types...
-                if let Some(error_type) = error_json["error"]["type"].as_str() {
-                    return ProcessingError {
-                        error_type: error_type.to_string(),
-                        message: error_json["error"]["message"]
-                            .as_str()
-                            .unwrap_or("Unknown error")
-                            .to_string(),
-                        retryable: matches!(error_type, "overloaded_error" | "rate_limit_error"),
-                        suggested_wait: Some(15), // Default 15 second backoff for other errors
-                    };
-                }
-            }
-        }
-
-        // Default error for unknown cases
+impl From<Box<dyn std::error::Error>> for ProcessingError {
+    fn from(error: Box<dyn std::error::Error>) -> Self {
         ProcessingError {
-            error_type: "unknown_error".to_string(),
-            message: "An unknown error occurred".to_string(),
+            message: error.to_string(),
             retryable: false,
-            suggested_wait: None,
         }
     }
 }
@@ -242,10 +208,7 @@ fn extract_tag_content(xml: &str, tag: &str) -> Option<String> {
 
 // New version
 impl State {
-    fn process_message(
-        &mut self,
-        mut message_state: MessageState,
-    ) -> Result<MessageState, ProcessingError> {
+    fn process_message(&mut self, message_state: &mut MessageState) -> Result<(), String> {
         // Step 1: Process any filesystem commands
         if let Some(commands) = &message_state.message.fs_commands {
             message_state.status = MessageStatus::ProcessingCommands;
@@ -263,7 +226,14 @@ impl State {
             message_state.status = MessageStatus::GeneratingResponse;
 
             // Get message history
-            let messages = self.get_message_history()?;
+            let messages = match self.get_message_history() {
+                Ok(msgs) => msgs,
+                Err(e) => {
+                    message_state.status = MessageStatus::Failed;
+                    message_state.last_error = Some(e.to_string());
+                    return Err(e.to_string());
+                }
+            };
 
             // Attempt to generate response
             match self.generate_response(messages) {
@@ -287,31 +257,62 @@ impl State {
                         ai_msg.id = Some(ai_msg_id);
 
                         message_state.status = MessageStatus::Completed;
-                        return Ok(message_state);
+                        return Ok(());
+                    } else {
+                        let error = "Failed to save AI message".to_string();
+                        message_state.status = MessageStatus::Failed;
+                        message_state.last_error = Some(error.clone());
+                        return Err(error);
                     }
                 }
                 Err(e) => {
+                    let error = e.to_string();
                     message_state.status = MessageStatus::Failed;
-                    message_state.last_error = Some(e.to_string());
-                    return Err(ProcessingError::from_http_response(&e));
+                    message_state.last_error = Some(error.clone());
+                    return Err(error);
                 }
             }
         }
 
-        Ok(message_state)
+        Ok(())
+    }
+
+    fn handle_retry(&self, message_state: &mut MessageState, error: &str) {
+        message_state.last_error = Some(error.to_string());
+
+        if message_state.retries < 3
+            && (error.contains("529") || // Cloudflare overloaded
+            error.contains("rate_limit") ||
+            error.contains("overloaded"))
+        {
+            message_state.status = MessageStatus::Pending;
+            message_state.retries += 1;
+        } else {
+            message_state.status = MessageStatus::Failed;
+        }
+    }
+
+    fn should_retry(&self, message_state: &MessageState, error: &str) -> bool {
+        // Only retry if we haven't hit the limit and it's a retryable error
+        message_state.retries < 3
+            && (error.contains("529") || // Cloudflare overloaded
+            error.contains("rate_limit") ||
+            error.contains("overloaded"))
+    }
+
+    fn handle_error(&self, message_state: &mut MessageState, error: String) {
+        message_state.last_error = Some(error.clone());
+        if self.should_retry(message_state, &error) {
+            message_state.status = MessageStatus::Pending;
+            message_state.retries += 1;
+        } else {
+            message_state.status = MessageStatus::Failed;
+        }
     }
 
     fn schedule_retry(&self, message_state: &mut MessageState, error: &ProcessingError) {
         if error.retryable && message_state.retries < 3 {
-            let wait_time = error.suggested_wait.unwrap_or(15) * (message_state.retries + 1) as u64;
-            message_state.next_retry = Some(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-                    + wait_time,
-            );
-            message_state.status = MessageStatus::RetryScheduled;
+            message_state.status = MessageStatus::Pending;
             message_state.retries += 1;
         } else {
             message_state.status = MessageStatus::Failed;
@@ -840,7 +841,6 @@ impl WebSocketGuest for Component {
                                         status: MessageStatus::Pending,
                                         retries: 0,
                                         last_error: None,
-                                        next_retry: None,
                                     };
 
                                     // Extract filesystem commands if present
@@ -857,50 +857,23 @@ impl WebSocketGuest for Component {
                                         }
                                     }
 
-                                    // Save initial message state
+                                    // Save initial message and process
                                     if let Ok(msg_id) = state.save_message(&message_state.message) {
                                         message_state.message.id = Some(msg_id.clone());
                                         state.head = Some(msg_id);
 
-                                        // Process message
-                                        match state.process_message(message_state) {
-                                            Ok(updated_state) => {
-                                                return (
-                                                    serde_json::to_vec(&state).unwrap(),
-                                                    WebsocketResponse {
-                                                        messages: vec![WebsocketMessage {
-                                                            ty: MessageType::Text,
-                                                            text: Some(
-                                                                json!({
-                                                                    "type": "message_state_update",
-                                                                    "message_state": updated_state
-                                                                })
-                                                                .to_string(),
-                                                            ),
-                                                            data: None,
-                                                        }],
-                                                    },
+                                        match state.process_message(&mut message_state) {
+                                            Ok(()) => {
+                                                return send_message_state_update(
+                                                    state,
+                                                    message_state,
                                                 );
                                             }
                                             Err(error) => {
-                                                // Update message state with error and retry info
-                                                state.schedule_retry(&mut message_state, &error);
-
-                                                return (
-                                                    serde_json::to_vec(&state).unwrap(),
-                                                    WebsocketResponse {
-                                                        messages: vec![WebsocketMessage {
-                                                            ty: MessageType::Text,
-                                                            text: Some(
-                                                                json!({
-                                                                    "type": "message_state_update",
-                                                                    "message_state": message_state
-                                                                })
-                                                                .to_string(),
-                                                            ),
-                                                            data: None,
-                                                        }],
-                                                    },
+                                                state.handle_retry(&mut message_state, &error);
+                                                return send_message_state_update(
+                                                    state,
+                                                    message_state,
                                                 );
                                             }
                                         }
@@ -910,52 +883,25 @@ impl WebSocketGuest for Component {
                             Some("retry_message") => {
                                 if let Some(message_id) = command["messageId"].as_str() {
                                     if let Ok(message) = state.load_message(message_id) {
-                                        let message_state = MessageState {
+                                        let mut message_state = MessageState {
                                             message,
                                             status: MessageStatus::Pending,
                                             retries: 0,
                                             last_error: None,
-                                            next_retry: None,
                                         };
 
-                                        match state.process_message(message_state) {
-                                            Ok(updated_state) => {
-                                                return (
-                                                    serde_json::to_vec(&state).unwrap(),
-                                                    WebsocketResponse {
-                                                        messages: vec![WebsocketMessage {
-                                                            ty: MessageType::Text,
-                                                            text: Some(
-                                                                json!({
-                                                                    "type": "message_state_update",
-                                                                    "message_state": updated_state
-                                                                })
-                                                                .to_string(),
-                                                            ),
-                                                            data: None,
-                                                        }],
-                                                    },
+                                        match state.process_message(&mut message_state) {
+                                            Ok(()) => {
+                                                return send_message_state_update(
+                                                    state,
+                                                    message_state,
                                                 );
                                             }
                                             Err(error) => {
-                                                let mut message_state = message_state;
-                                                state.schedule_retry(&mut message_state, &error);
-
-                                                return (
-                                                    serde_json::to_vec(&state).unwrap(),
-                                                    WebsocketResponse {
-                                                        messages: vec![WebsocketMessage {
-                                                            ty: MessageType::Text,
-                                                            text: Some(
-                                                                json!({
-                                                                    "type": "message_state_update",
-                                                                    "message_state": message_state
-                                                                })
-                                                                .to_string(),
-                                                            ),
-                                                            data: None,
-                                                        }],
-                                                    },
+                                                state.handle_retry(&mut message_state, &error);
+                                                return send_message_state_update(
+                                                    state,
+                                                    message_state,
                                                 );
                                             }
                                         }
@@ -1042,6 +988,29 @@ impl MessageServerClient for Component {
             serde_json::to_vec(&state).unwrap(),
         )
     }
+}
+
+// Helper function to create the WebSocket response with message state
+fn send_message_state_update(
+    state: State,
+    message_state: MessageState,
+) -> (Json, WebsocketResponse) {
+    (
+        serde_json::to_vec(&state).unwrap(),
+        WebsocketResponse {
+            messages: vec![WebsocketMessage {
+                ty: MessageType::Text,
+                text: Some(
+                    json!({
+                        "type": "message_state_update",
+                        "message_state": message_state
+                    })
+                    .to_string(),
+                ),
+                data: None,
+            }],
+        },
+    )
 }
 
 struct Component;
