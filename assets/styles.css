@@ -34,6 +34,39 @@ body {
     overflow: hidden;
 }
 
+/* Chat pane */
+.chat-pane {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--gray-200);
+}
+
+/* Info pane */
+.info-pane {
+    width: 300px;
+    background: white;
+    overflow-y: auto;
+    padding: 1rem;
+    border-left: 1px solid var(--gray-200);
+}
+
+.info-section {
+    margin-bottom: 2rem;
+}
+
+.info-section h2 {
+    font-size: 1.25rem;
+    color: var(--gray-800);
+    margin-bottom: 1rem;
+}
+
+.results-section {
+    border-top: 1px solid var(--gray-200);
+    padding-top: 1rem;
+}
+
 /* Title bar */
 .title-bar {
     padding: 1rem;
@@ -92,10 +125,8 @@ body {
     background: white;
     display: flex;
     flex-direction: column;
-    max-width: 800px;
     width: 100%;
-    margin: 0 auto;
-    height: 100vh;
+    height: 100%;
     position: relative;
     overflow: hidden;
 }
@@ -321,12 +352,8 @@ body {
 
 /* Input area */
 .input-area {
-    position: fixed;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
+    position: relative;
     width: 100%;
-    max-width: 800px;
     padding: 1rem;
     background: white;
     border-top: 1px solid var(--gray-200);
@@ -386,6 +413,20 @@ body {
 @media (max-width: 768px) {
     .container {
         padding: 0;
+        flex-direction: column;
+    }
+
+    .chat-pane {
+        flex: 1;
+        min-height: 0;
+        border-right: none;
+    }
+
+    .info-pane {
+        width: 100%;
+        height: 300px;
+        border-left: none;
+        border-top: 1px solid var(--gray-200);
     }
 
     .message {
@@ -394,6 +435,10 @@ body {
 
     .input-area {
         padding: 0.75rem;
+    }
+
+    .main-chat {
+        min-height: 0;
     }
 }
 
