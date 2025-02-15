@@ -264,27 +264,47 @@ body {
     height: 12px;
 }
 
-/* Filesystem results */
-.fs-results {
-    margin-top: 0.5rem;
-    padding-top: 0.5rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+/* Command Results Panel */
+.command-results-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.result-block {
+    background: var(--gray-100);
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+
+.result-block-header {
+    background: var(--gray-200);
+    padding: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     font-size: 0.875rem;
 }
 
-.message.assistant .fs-results {
-    border-top-color: rgba(0, 0, 0, 0.1);
+.result-block-header .timestamp {
+    color: var(--gray-700);
+    font-size: 0.75rem;
+}
+
+.result-block-content {
+    padding: 0.75rem;
 }
 
 .fs-result {
     padding: 0.5rem;
     border-radius: 0.25rem;
-    margin-bottom: 0.25rem;
-    background: rgba(255, 255, 255, 0.1);
+    margin-bottom: 0.5rem;
+    background: white;
+    border: 1px solid var(--gray-200);
 }
 
-.message.assistant .fs-result {
-    background: rgba(0, 0, 0, 0.05);
+.fs-result:last-child {
+    margin-bottom: 0;
 }
 
 .fs-result.success strong {
@@ -298,25 +318,24 @@ body {
 .fs-result .path {
     font-family: monospace;
     margin-left: 0.5rem;
+    color: var(--gray-700);
 }
 
 .fs-result .data {
-    margin-top: 0.25rem;
+    margin-top: 0.5rem;
     padding: 0.5rem;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--gray-100);
     border-radius: 0.25rem;
     font-family: monospace;
     white-space: pre-wrap;
     font-size: 0.8rem;
-}
-
-.message.assistant .fs-result .data {
-    background: rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--gray-200);
 }
 
 .fs-result .error {
     margin-top: 0.25rem;
     color: var(--error);
+    font-size: 0.875rem;
 }
 
 /* Typing indicator */

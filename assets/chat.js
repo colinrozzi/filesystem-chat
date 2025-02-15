@@ -91,10 +91,16 @@ function handleWebSocketMessage(data) {
         if (data.message) {
             // Single message update
             messageCache.set(data.message.id, data.message);
+            if (data.message.fs_results) {
+                updateCommandResults(data.message);
+            }
         } else if (data.messages) {
             // Multiple message update
             data.messages.forEach(msg => {
                 messageCache.set(msg.id, msg);
+                if (msg.fs_results) {
+                    updateCommandResults(msg);
+                }
             });
         }
         
@@ -110,6 +116,27 @@ function handleWebSocketMessage(data) {
         
         // Update head ID
         updateHeadId(Array.from(messageCache.values()));
+    }
+}
+
+function updateCommandResults(message) {
+    const resultsContainer = document.querySelector('.command-results-container');
+    
+    if (message.fs_results && message.fs_results.length > 0) {
+        const resultBlock = document.createElement('div');
+        resultBlock.className = 'result-block';
+        resultBlock.innerHTML = `
+            <div class="result-block-header">
+                <span>${message.role}'s command results</span>
+                <span class="timestamp">${new Date().toLocaleTimeString()}</span>
+            </div>
+            <div class="result-block-content">
+                ${formatFsResults(message.fs_results)}
+            </div>
+        `;
+        
+        // Add to the top of the container
+        resultsContainer.insertBefore(resultBlock, resultsContainer.firstChild);
     }
 }
 
@@ -316,7 +343,6 @@ function renderMessages(messages, isTyping = false) {
             <div class="message ${msg.role} ${msg.id === selectedMessageId ? 'selected' : ''}" 
                  data-id="${msg.id}">
                 ${formatMessage(msg.content)}
-                ${msg.fs_results ? formatFsResults(msg.fs_results) : ''}
                 <div class="message-actions">
                     <button class="message-action-button copy-button">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor">
