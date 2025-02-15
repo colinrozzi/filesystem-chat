@@ -123,8 +123,201 @@ impl Message {
 
 use bindings::ntwk::theater::http_client::{send_http, HttpRequest};
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct MessageState {
+    message: Message,
+    status: MessageStatus,
+    retries: u32,
+    last_error: Option<String>,
+    next_retry: Option<u64>, // Unix timestamp
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+enum MessageStatus {
+    Pending,
+    ProcessingCommands,
+    GeneratingResponse,
+    Completed,
+    Failed,
+    RetryScheduled,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ProcessingError {
+    error_type: String,
+    message: String,
+    retryable: bool,
+    suggested_wait: Option<u64>, // Seconds to wait before retry
+}
+
+impl ProcessingError {
+    fn from_http_response(response: &HttpResponse) -> Self {
+        // Parse error from Anthropic/Cloudflare response
+        if let Some(body) = &response.body {
+            if let Ok(error_json) = serde_json::from_slice::<Value>(body) {
+                if response.status == 529 {
+                    return ProcessingError {
+                        error_type: "overloaded_error".to_string(),
+                        message: "Service is currently overloaded".to_string(),
+                        retryable: true,
+                        suggested_wait: Some(30), // Start with 30 second backoff
+                    };
+                }
+
+                // Handle other error types...
+                if let Some(error_type) = error_json["error"]["type"].as_str() {
+                    return ProcessingError {
+                        error_type: error_type.to_string(),
+                        message: error_json["error"]["message"]
+                            .as_str()
+                            .unwrap_or("Unknown error")
+                            .to_string(),
+                        retryable: matches!(error_type, "overloaded_error" | "rate_limit_error"),
+                        suggested_wait: Some(15), // Default 15 second backoff for other errors
+                    };
+                }
+            }
+        }
+
+        // Default error for unknown cases
+        ProcessingError {
+            error_type: "unknown_error".to_string(),
+            message: "An unknown error occurred".to_string(),
+            retryable: false,
+            suggested_wait: None,
+        }
+    }
+}
+
+// Helper function to parse filesystem commands from AI response
+fn parse_fs_commands(response: &str) -> Option<Vec<FsCommand>> {
+    let mut commands = Vec::new();
+    let response_parts: Vec<&str> = response.split("<fs-command>").collect();
+
+    for part in response_parts.iter().skip(1) {
+        if let Some(cmd_end) = part.find("</fs-command>") {
+            let cmd_xml = &part[..cmd_end];
+
+            // Extract operation
+            if let (Some(op_start), Some(op_end)) =
+                (cmd_xml.find("<operation>"), cmd_xml.find("</operation>"))
+            {
+                let operation = &cmd_xml[op_start + 11..op_end];
+
+                // Extract path
+                if let (Some(path_start), Some(path_end)) =
+                    (cmd_xml.find("<path>"), cmd_xml.find("</path>"))
+                {
+                    let path = &cmd_xml[path_start + 6..path_end];
+
+                    commands.push(FsCommand {
+                        operation: operation.to_string(),
+                        path: path.to_string(),
+                        content: extract_tag_content(cmd_xml, "content"),
+                        old_text: extract_tag_content(cmd_xml, "old_text"),
+                        new_text: extract_tag_content(cmd_xml, "new_text"),
+                    });
+                }
+            }
+        }
+    }
+
+    if commands.is_empty() {
+        None
+    } else {
+        Some(commands)
+    }
+}
+
+fn extract_tag_content(xml: &str, tag: &str) -> Option<String> {
+    if let (Some(start), Some(end)) = (
+        xml.find(&format!("<{}>", tag)),
+        xml.find(&format!("</{}>", tag)),
+    ) {
+        Some(xml[start + tag.len() + 2..end].to_string())
+    } else {
+        None
+    }
+}
+
 // New version
 impl State {
+    fn process_message(
+        &mut self,
+        mut message_state: MessageState,
+    ) -> Result<MessageState, ProcessingError> {
+        // Step 1: Process any filesystem commands
+        if let Some(commands) = &message_state.message.fs_commands {
+            message_state.status = MessageStatus::ProcessingCommands;
+            message_state.message.fs_results = Some(self.process_fs_commands(commands.clone()));
+
+            // Update message with results
+            if let Ok(updated_id) = self.save_message(&message_state.message) {
+                message_state.message.id = Some(updated_id.clone());
+                self.head = Some(updated_id);
+            }
+        }
+
+        // Step 2: Generate AI response if this is a user message
+        if message_state.message.role == "user" {
+            message_state.status = MessageStatus::GeneratingResponse;
+
+            // Get message history
+            let messages = self.get_message_history()?;
+
+            // Attempt to generate response
+            match self.generate_response(messages) {
+                Ok(ai_response) => {
+                    // Create AI message
+                    let mut ai_msg = Message::new(
+                        "assistant".to_string(),
+                        ai_response.clone(),
+                        message_state.message.id.clone(),
+                    );
+
+                    // Parse and process any filesystem commands in the response
+                    if let Some(fs_commands) = parse_fs_commands(&ai_response) {
+                        ai_msg.fs_commands = Some(fs_commands.clone());
+                        ai_msg.fs_results = Some(self.process_fs_commands(fs_commands));
+                    }
+
+                    // Save AI message
+                    if let Ok(ai_msg_id) = self.save_message(&ai_msg) {
+                        self.head = Some(ai_msg_id.clone());
+                        ai_msg.id = Some(ai_msg_id);
+
+                        message_state.status = MessageStatus::Completed;
+                        return Ok(message_state);
+                    }
+                }
+                Err(e) => {
+                    message_state.status = MessageStatus::Failed;
+                    message_state.last_error = Some(e.to_string());
+                    return Err(ProcessingError::from_http_response(&e));
+                }
+            }
+        }
+
+        Ok(message_state)
+    }
+
+    fn schedule_retry(&self, message_state: &mut MessageState, error: &ProcessingError) {
+        if error.retryable && message_state.retries < 3 {
+            let wait_time = error.suggested_wait.unwrap_or(15) * (message_state.retries + 1) as u64;
+            message_state.next_retry = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    + wait_time,
+            );
+            message_state.status = MessageStatus::RetryScheduled;
+            message_state.retries += 1;
+        } else {
+            message_state.status = MessageStatus::Failed;
+        }
+    }
+
     fn resolve_path(&self, relative_path: &str) -> String {
         if relative_path.starts_with("/") {
             // Don't modify absolute paths
@@ -636,12 +829,19 @@ impl WebSocketGuest for Component {
                                 log("Matched send_message command");
                                 if let Some(content) = command["content"].as_str() {
                                     log(&format!("Processing content: {}", content));
-                                    // Create initial user message
-                                    let mut user_msg = Message::new(
-                                        "user".to_string(),
-                                        content.to_string(),
-                                        state.head.clone(),
-                                    );
+
+                                    // Create initial message state
+                                    let mut message_state = MessageState {
+                                        message: Message::new(
+                                            "user".to_string(),
+                                            content.to_string(),
+                                            state.head.clone(),
+                                        ),
+                                        status: MessageStatus::Pending,
+                                        retries: 0,
+                                        last_error: None,
+                                        next_retry: None,
+                                    };
 
                                     // Extract filesystem commands if present
                                     if let Some(fs_commands) = command["fs_commands"].as_array() {
@@ -653,192 +853,112 @@ impl WebSocketGuest for Component {
                                             .collect();
 
                                         if !commands.is_empty() {
-                                            user_msg.fs_commands = Some(commands.clone());
+                                            message_state.message.fs_commands = Some(commands);
                                         }
                                     }
 
-                                    // Save the message first
-                                    if let Ok(msg_id) = state.save_message(&user_msg) {
-                                        log(&format!("Saved user message with id: {}", msg_id));
-                                        let mut user_msg = user_msg.with_id(msg_id.clone());
+                                    // Save initial message state
+                                    if let Ok(msg_id) = state.save_message(&message_state.message) {
+                                        message_state.message.id = Some(msg_id.clone());
                                         state.head = Some(msg_id);
 
-                                        // Process any filesystem commands
-                                        if let Some(commands) = &user_msg.fs_commands {
-                                            let results =
-                                                state.process_fs_commands(commands.clone());
-                                            user_msg.fs_results = Some(results);
-
-                                            // Update message with results
-                                            if let Ok(updated_id) = state.save_message(&user_msg) {
-                                                user_msg = user_msg.with_id(updated_id.clone());
-                                                state.head = Some(updated_id);
-                                            }
-                                        }
-
-                                        // Get message history and generate response
-                                        log("Attempting to get message history");
-                                        if let Ok(messages) = state.get_message_history() {
-                                            log(&format!(
-                                                "Got message history with {} messages",
-                                                messages.len()
-                                            ));
-
-                                            log("Attempting to generate response");
-                                            if let Ok(ai_response) =
-                                                state.generate_response(messages)
-                                            {
-                                                log("Successfully generated AI response");
-
-                                                // Parse fs commands from the response
-                                                let mut fs_commands = Vec::new();
-
-                                                // Simple XML parsing for fs-command tags
-                                                let response_parts: Vec<&str> =
-                                                    ai_response.split("<fs-command>").collect();
-                                                for part in response_parts.iter().skip(1) {
-                                                    if let Some(cmd_end) =
-                                                        part.find("</fs-command>")
-                                                    {
-                                                        let cmd_xml = &part[..cmd_end];
-
-                                                        // Extract operation
-                                                        if let (Some(op_start), Some(op_end)) = (
-                                                            cmd_xml.find("<operation>"),
-                                                            cmd_xml.find("</operation>"),
-                                                        ) {
-                                                            let operation =
-                                                                &cmd_xml[op_start + 11..op_end];
-
-                                                            // Extract path
-                                                            if let (
-                                                                Some(path_start),
-                                                                Some(path_end),
-                                                            ) = (
-                                                                cmd_xml.find("<path>"),
-                                                                cmd_xml.find("</path>"),
-                                                            ) {
-                                                                let path = &cmd_xml
-                                                                    [path_start + 6..path_end];
-
-                                                                // Extract content if present
-                                                                let content = if let (
-                                                                    Some(content_start),
-                                                                    Some(content_end),
-                                                                ) = (
-                                                                    cmd_xml.find("<content>"),
-                                                                    cmd_xml.find("</content>"),
-                                                                ) {
-                                                                    Some(
-                                                                        cmd_xml[content_start + 9
-                                                                            ..content_end]
-                                                                            .to_string(),
-                                                                    )
-                                                                } else {
-                                                                    None
-                                                                };
-
-                                                                // Extract old_text if present
-                                                                let old_text = if let (Some(old_text_start), Some(old_text_end)) = (
-                                                                    cmd_xml.find("<old_text>"),
-                                                                    cmd_xml.find("</old_text>"),
-                                                                ) {
-                                                                    Some(
-                                                                        cmd_xml[old_text_start + 10
-                                                                            ..old_text_end]
-                                                                            .to_string(),
-                                                                    )
-                                                                } else {
-                                                                    None
-                                                                };
-
-                                                                // Extract new_text if present
-                                                                let new_text = if let (Some(new_text_start), Some(new_text_end)) = (
-                                                                    cmd_xml.find("<new_text>"),
-                                                                    cmd_xml.find("</new_text>"),
-                                                                ) {
-                                                                    Some(
-                                                                        cmd_xml[new_text_start + 10
-                                                                            ..new_text_end]
-                                                                            .to_string(),
-                                                                    )
-                                                                } else {
-                                                                    None
-                                                                };
-
-                                                                fs_commands.push(FsCommand {
-                                                                    operation: operation
-                                                                        .to_string(),
-                                                                    path: path.to_string(),
-                                                                    content,
-                                                                    old_text,
-                                                                    new_text,
-                                                                });
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                // Create AI message with parsed commands
-                                                let mut ai_msg = Message::new(
-                                                    "assistant".to_string(),
-                                                    ai_response.clone(),
-                                                    Some(user_msg.id.clone().unwrap()),
+                                        // Process message
+                                        match state.process_message(message_state) {
+                                            Ok(updated_state) => {
+                                                return (
+                                                    serde_json::to_vec(&state).unwrap(),
+                                                    WebsocketResponse {
+                                                        messages: vec![WebsocketMessage {
+                                                            ty: MessageType::Text,
+                                                            text: Some(
+                                                                json!({
+                                                                    "type": "message_state_update",
+                                                                    "message_state": updated_state
+                                                                })
+                                                                .to_string(),
+                                                            ),
+                                                            data: None,
+                                                        }],
+                                                    },
                                                 );
+                                            }
+                                            Err(error) => {
+                                                // Update message state with error and retry info
+                                                state.schedule_retry(&mut message_state, &error);
 
-                                                // Add commands if any were found
-                                                if !fs_commands.is_empty() {
-                                                    ai_msg.fs_commands = Some(fs_commands.clone());
-
-                                                    // Execute commands and store results
-                                                    let results =
-                                                        state.process_fs_commands(fs_commands);
-                                                    ai_msg.fs_results = Some(results);
-                                                }
-
-                                                // Save AI message
-                                                if let Ok(ai_msg_id) = state.save_message(&ai_msg) {
-                                                    state.head = Some(ai_msg_id.clone());
-                                                    let ai_msg_with_id = ai_msg.with_id(ai_msg_id);
-
-                                                    // Send both messages
-                                                    return (
-                                                        serde_json::to_vec(&state).unwrap(),
-                                                        WebsocketResponse {
-                                                            messages: vec![WebsocketMessage {
-                                                                ty: MessageType::Text,
-                                                                text: Some(
-                                                                    json!({
-                                                                        "type": "message_update",
-                                                                        "messages": [user_msg, ai_msg_with_id]
-                                                                    })
-                                                                    .to_string(),
-                                                                ),
-                                                                data: None,
-                                                            }],
-                                                        },
-                                                    );
-                                                }
+                                                return (
+                                                    serde_json::to_vec(&state).unwrap(),
+                                                    WebsocketResponse {
+                                                        messages: vec![WebsocketMessage {
+                                                            ty: MessageType::Text,
+                                                            text: Some(
+                                                                json!({
+                                                                    "type": "message_state_update",
+                                                                    "message_state": message_state
+                                                                })
+                                                                .to_string(),
+                                                            ),
+                                                            data: None,
+                                                        }],
+                                                    },
+                                                );
                                             }
                                         }
+                                    }
+                                }
+                            }
+                            Some("retry_message") => {
+                                if let Some(message_id) = command["messageId"].as_str() {
+                                    if let Ok(message) = state.load_message(message_id) {
+                                        let message_state = MessageState {
+                                            message,
+                                            status: MessageStatus::Pending,
+                                            retries: 0,
+                                            last_error: None,
+                                            next_retry: None,
+                                        };
 
-                                        // If we get here, something went wrong, just send the user message
-                                        return (
-                                            serde_json::to_vec(&state).unwrap(),
-                                            WebsocketResponse {
-                                                messages: vec![WebsocketMessage {
-                                                    ty: MessageType::Text,
-                                                    text: Some(
-                                                        json!({
-                                                            "type": "message_update",
-                                                            "message": user_msg
-                                                        })
-                                                        .to_string(),
-                                                    ),
-                                                    data: None,
-                                                }],
-                                            },
-                                        );
+                                        match state.process_message(message_state) {
+                                            Ok(updated_state) => {
+                                                return (
+                                                    serde_json::to_vec(&state).unwrap(),
+                                                    WebsocketResponse {
+                                                        messages: vec![WebsocketMessage {
+                                                            ty: MessageType::Text,
+                                                            text: Some(
+                                                                json!({
+                                                                    "type": "message_state_update",
+                                                                    "message_state": updated_state
+                                                                })
+                                                                .to_string(),
+                                                            ),
+                                                            data: None,
+                                                        }],
+                                                    },
+                                                );
+                                            }
+                                            Err(error) => {
+                                                let mut message_state = message_state;
+                                                state.schedule_retry(&mut message_state, &error);
+
+                                                return (
+                                                    serde_json::to_vec(&state).unwrap(),
+                                                    WebsocketResponse {
+                                                        messages: vec![WebsocketMessage {
+                                                            ty: MessageType::Text,
+                                                            text: Some(
+                                                                json!({
+                                                                    "type": "message_state_update",
+                                                                    "message_state": message_state
+                                                                })
+                                                                .to_string(),
+                                                            ),
+                                                            data: None,
+                                                        }],
+                                                    },
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                             }

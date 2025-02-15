@@ -428,6 +428,115 @@ function handleResultBlockClick(event) {
     }
 }
 
+// Add to the existing state management
+let processingStates = new Map();
+let retryTimeouts = new Map();
+
+// Add these new message handling functions
+function handleMessageState(messageState) {
+    const { message, status, last_error, next_retry } = messageState;
+    
+    // Update the message cache
+    messageCache.set(message.id, message);
+    
+    // Update processing state
+    processingStates.set(message.id, {
+        status,
+        lastError: last_error,
+        nextRetry: next_retry
+    });
+    
+    // Handle retries
+    if (status === 'RetryScheduled' && next_retry) {
+        scheduleRetry(message.id, next_retry);
+    }
+    
+    // Update UI
+    renderMessages([...messageCache.values()], false);
+}
+
+function scheduleRetry(messageId, retryTime) {
+    // Clear any existing retry timeout
+    if (retryTimeouts.has(messageId)) {
+        clearTimeout(retryTimeouts.get(messageId));
+    }
+    
+    // Calculate delay in milliseconds
+    const now = Math.floor(Date.now() / 1000);
+    const delay = (retryTime - now) * 1000;
+    
+    // Schedule retry
+    const timeout = setTimeout(() => {
+        retryMessage(messageId);
+        retryTimeouts.delete(messageId);
+    }, delay);
+    
+    retryTimeouts.set(messageId, timeout);
+}
+
+function retryMessage(messageId) {
+    sendWebSocketMessage({
+        type: 'retry_message',
+        messageId
+    });
+}
+
+// Update the message rendering to show status and errors
+function renderMessage(msg) {
+    const processingState = processingStates.get(msg.id);
+    const isProcessing = processingState?.status === 'ProcessingCommands' 
+        || processingState?.status === 'GeneratingResponse';
+    const hasFailed = processingState?.status === 'Failed';
+    const isRetrying = processingState?.status === 'RetryScheduled';
+    
+    return `
+        <div class="message ${msg.role} ${msg.id === selectedMessageId ? 'selected' : ''} 
+                          ${isProcessing ? 'processing' : ''} 
+                          ${hasFailed ? 'failed' : ''} 
+                          ${isRetrying ? 'retrying' : ''}"
+             data-id="${msg.id}">
+            ${formatMessage(msg.content)}
+            
+            ${hasFailed ? `
+                <div class="error-banner">
+                    <span class="error-message">${processingState.lastError}</span>
+                    ${processingState.status === 'RetryScheduled' ? `
+                        <span class="retry-message">
+                            Retrying in ${formatRetryTime(processingState.nextRetry)}
+                        </span>
+                    ` : ''}
+                    <button class="retry-button" onclick="retryMessage('${msg.id}')">
+                        Retry Now
+                    </button>
+                </div>
+            ` : ''}
+            
+            <div class="message-actions">
+                ${renderMessageActions(msg)}
+            </div>
+            
+            ${isProcessing ? `
+                <div class="processing-indicator">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            ` : ''}
+        </div>
+    `;
+}
+
+function formatRetryTime(timestamp) {
+    const now = Math.floor(Date.now() / 1000);
+    const seconds = timestamp - now;
+    
+    if (seconds < 60) {
+        return `${seconds} seconds`;
+    } else {
+        return `${Math.floor(seconds / 60)} minutes`;
+    }
+}
+
 // Event listeners
 document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
