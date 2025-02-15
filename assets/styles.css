@@ -45,9 +45,9 @@ body {
 
 /* Info pane */
 .info-pane {
-    width: 300px;
+    width: 600px;
     min-width: 50px;
-    max-width: 600px;
+    max-width: 1000px;
     background: white;
     border-left: 1px solid var(--gray-200);
     position: relative;
@@ -357,13 +357,22 @@ body {
 .result-block-header {
     background: var(--gray-200);
     padding: 0.75rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
     font-size: 0.875rem;
+    cursor: pointer;
 }
 
-.result-block-header .timestamp {
+.result-block-header .header-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.result-block-header .command-text {
+    font-family: monospace;
+    color: var(--primary);
+}
+
+.result-block-header .command-meta {
     color: var(--gray-700);
     font-size: 0.75rem;
 }

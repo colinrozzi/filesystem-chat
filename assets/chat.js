@@ -125,10 +125,29 @@ function updateCommandResults(message) {
     if (message.fs_results && message.fs_results.length > 0) {
         const resultBlock = document.createElement('div');
         resultBlock.className = 'result-block';
+        // Extract the command from the message content
+        let command = "Command";
+        const commandMatch = message.content.match(/<fs-command>[\s\S]*?<\/fs-command>/g);
+        if (commandMatch) {
+            // Clean up the command for display
+            // Extract operation and path separately
+            const operation = commandMatch[0].match(/<operation>([^<]+)<\/operation>/)?.[1] || '';
+            const path = commandMatch[0].match(/<path>([^<]+)<\/path>/)?.[1] || '';
+            const content = commandMatch[0].match(/<content>([^<]+)<\/content>/)?.[1];
+            
+            // Combine them with proper spacing
+            command = `${operation} ${path}`;
+            if (content) {
+                command += ` (with content)`;
+            }
+        }
+
         resultBlock.innerHTML = `
             <div class="result-block-header">
-                <span>${message.role}'s command results</span>
-                <span class="timestamp">${new Date().toLocaleTimeString()}</span>
+                <div class="header-content">
+                    <span class="command-text">${escapeHtml(command)}</span>
+                    <span class="command-meta">${message.role} • ${new Date().toLocaleTimeString()}</span>
+                </div>
             </div>
             <div class="result-block-content">
                 ${formatFsResults(message.fs_results)}
