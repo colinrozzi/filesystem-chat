@@ -45,9 +45,18 @@
 
         <!-- Right pane: Info & Results -->
         <div class="info-pane">
-            <div class="info-section">
-                <h2>Available Commands</h2>
-                <p>You can use filesystem commands in your messages using XML tags:</p>
+            <button class="collapse-button" id="collapseButton">
+                <svg class="collapse-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M15 18l-6-6 6-6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+            <div class="info-pane-content">
+            <div class="info-section result-block">
+                <div class="result-block-header">
+                    <span>Available Commands</span>
+                </div>
+                <div class="result-block-content">
+                    <p>You can use filesystem commands in your messages using XML tags:</p>
                 <pre class="xml-command">
 &lt;fs-command&gt;
     &lt;operation&gt;read-file&lt;/operation&gt;
@@ -61,12 +70,14 @@
                     <li><code>delete-file</code> - Delete a file</li>
                     <li><code>delete-dir</code> - Delete a directory</li>
                 </ul>
+                </div>
             </div>
             <div id="commandResults" class="results-section">
                 <h2>Command Results</h2>
                 <div class="command-results-container">
                     <!-- Command results will be shown here dynamically -->
                 </div>
+            </div>
             </div>
         </div>
     </div>

@@ -46,20 +46,97 @@ body {
 /* Info pane */
 .info-pane {
     width: 300px;
+    min-width: 50px;
+    max-width: 600px;
     background: white;
+    border-left: 1px solid var(--gray-200);
+    position: relative;
+    transition: width 0.3s;
+    display: flex;
+}
+
+.info-pane.collapsed {
+    width: 50px;
+}
+
+.info-pane-content {
+    flex: 1;
     overflow-y: auto;
     padding: 1rem;
-    border-left: 1px solid var(--gray-200);
+    opacity: 1;
+    transition: opacity 0.2s;
 }
 
-.info-section {
-    margin-bottom: 2rem;
+.info-pane.collapsed .info-pane-content {
+    opacity: 0;
+    pointer-events: none;
 }
 
-.info-section h2 {
-    font-size: 1.25rem;
-    color: var(--gray-800);
+.collapse-button {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-left: none;
+    border-radius: 0 4px 4px 0;
+    padding: 8px 4px;
+    cursor: pointer;
+    transition: transform 0.3s;
+}
+
+.info-pane.collapsed .collapse-button {
+    transform: translateY(-50%) rotate(180deg);
+}
+
+.collapse-button:hover {
+    background: var(--gray-100);
+}
+
+/* Make the info pane resizable */
+.info-pane {
+    resize: horizontal;
+}
+
+.info-pane.collapsed {
+    resize: none;
+}
+
+.info-section.result-block {
     margin-bottom: 1rem;
+}
+
+.info-section.result-block .result-block-content {
+    display: block;
+}
+
+.info-section.result-block p {
+    margin-bottom: 1rem;
+    color: var(--gray-700);
+}
+
+.info-section .command-list {
+    list-style: none;
+    padding: 0;
+}
+
+.info-section .command-list li {
+    padding: 0.5rem;
+    border-radius: 0.25rem;
+    margin-bottom: 0.5rem;
+    background: white;
+    border: 1px solid var(--gray-200);
+}
+
+.info-section .command-list li code {
+    color: var(--primary);
+    font-family: monospace;
+    background: var(--gray-100);
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    margin-right: 0.5rem;
 }
 
 .results-section {
@@ -293,6 +370,19 @@ body {
 
 .result-block-content {
     padding: 0.75rem;
+    display: none;
+}
+
+.result-block.expanded .result-block-content {
+    display: block;
+}
+
+.result-block-header {
+    cursor: pointer;
+}
+
+.result-block-header:hover {
+    background: var(--gray-300);
 }
 
 .fs-result {

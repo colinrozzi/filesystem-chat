@@ -390,9 +390,36 @@ function escapeHtml(unsafe) {
         .replace(/'/g, "&#039;");
 }
 
+// Handle info pane collapse
+function setupInfoPane() {
+    const infoPane = document.querySelector('.info-pane');
+    const collapseButton = document.getElementById('collapseButton');
+
+    collapseButton.addEventListener('click', () => {
+        infoPane.classList.toggle('collapsed');
+    });
+}
+
+// Handle command result collapse
+function handleResultBlockClick(event) {
+    const header = event.target.closest('.result-block-header');
+    if (header) {
+        const block = header.closest('.result-block');
+        block.classList.toggle('expanded');
+    }
+}
+
 // Event listeners
 document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
+    setupInfoPane();
+
+    // Make sure Available Commands section starts expanded
+    const commandsSection = document.querySelector('.info-section.result-block');
+    commandsSection.classList.add('expanded');
+    
+    // Add click handler for result blocks and Available Commands
+    document.querySelector('.info-pane-content').addEventListener('click', handleResultBlockClick);
 
     // Setup message input handling
     messageInput.addEventListener('keydown', (event) => {
